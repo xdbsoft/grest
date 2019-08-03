@@ -1,12 +1,23 @@
 package postgresql
 
 import (
+	"log"
 	"testing"
 
 	"github.com/xdbsoft/grest/api"
 )
 
 const ConnectionString string = "user=nestor password=nestor dbname=nestor sslmode=disable"
+
+func init() {
+	r, err := New(ConnectionString)
+	if err != nil {
+		err = r.Init()
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+}
 
 func TestNew(t *testing.T) {
 
