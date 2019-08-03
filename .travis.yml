@@ -4,6 +4,5 @@ services:
   - postgresql
 
 before_script:
-  - psql -c "create database nestor;" -U postgres
   - psql -c "create user nestor password 'nestor';" -U postgres
-  - psql -c "grant all on nestor to nestor;" -U postgres
+  - psql -c "create database nestor with owner=nestor;" -U postgres
