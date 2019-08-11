@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/xdbsoft/grest/api"
 )
@@ -33,10 +34,12 @@ func (c testCase) Run(t *testing.T) {
 		colDefs[cd.Path.String()] = cd
 	}
 
+	mock := &mockedDataRepository{Data: c.data, Now: time.Date(2018, 8, 24, 5, 0, 0, 0, time.UTC)}
+
 	s := server{
 		Collections:    colDefs,
 		Authenticator:  mockedAuthenticator{},
-		DataRepository: mockedDataRepository(c.data),
+		DataRepository: mock,
 		RuleChecker:    api.RuleChecker{},
 	}
 
@@ -67,6 +70,8 @@ func (c testCase) Run(t *testing.T) {
 		if bodyString != request.expectedBody {
 			t.Errorf("Request %d: Unexpected body, expected '%s', got '%s'", j, request.expectedBody, bodyString)
 		}
+
+		mock.Now = mock.Now.Add(1 * time.Hour)
 	}
 
 }
@@ -373,7 +378,7 @@ func TestServeHTTP_PutGet(t *testing.T) {
 				url:                 "http://example.com/test/doc1",
 				expectedCode:        200,
 				expectedContentType: "application/json",
-				expectedBody: `{"id":"doc1","properties":{"k":"v"}}
+				expectedBody: `{"id":"doc1","creationDate":"2018-08-24T05:00:00Z","lastModificationDate":"2018-08-24T05:00:00Z","properties":{"k":"v"}}
 `,
 			},
 		},
@@ -398,7 +403,7 @@ func TestServeHTTP_PostGet_Collection(t *testing.T) {
 				body:                `{"k":"v"}`,
 				expectedCode:        202,
 				expectedContentType: "application/json",
-				expectedBody: `{"id":"ID_1","properties":{"k":"v"}}
+				expectedBody: `{"id":"ID_1","creationDate":"2018-08-24T05:00:00Z","lastModificationDate":"2018-08-24T05:00:00Z","properties":{"k":"v"}}
 `,
 			},
 			{
@@ -406,7 +411,7 @@ func TestServeHTTP_PostGet_Collection(t *testing.T) {
 				url:                 "http://example.com/test/ID_1",
 				expectedCode:        200,
 				expectedContentType: "application/json",
-				expectedBody: `{"id":"ID_1","properties":{"k":"v"}}
+				expectedBody: `{"id":"ID_1","creationDate":"2018-08-24T05:00:00Z","lastModificationDate":"2018-08-24T05:00:00Z","properties":{"k":"v"}}
 `,
 			},
 		},
@@ -446,7 +451,7 @@ func TestServeHTTP_PutPostGet(t *testing.T) {
 				url:                 "http://example.com/test/doc1",
 				expectedCode:        200,
 				expectedContentType: "application/json",
-				expectedBody: `{"id":"doc1","properties":{"k":"v2","x":123}}
+				expectedBody: `{"id":"doc1","creationDate":"2018-08-24T05:00:00Z","lastModificationDate":"2018-08-24T06:00:00Z","properties":{"k":"v2","x":123}}
 `,
 			},
 		},

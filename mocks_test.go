@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/xdbsoft/grest/api"
 )
@@ -38,16 +39,20 @@ func (err notFound) Error() string {
 	return string(err)
 }
 
-type mockedDataRepository map[string]map[string]api.Document
+type mockedDataRepository struct {
+	Data map[string]map[string]api.Document
+	Now  time.Time
+}
 
-func (r mockedDataRepository) Init() error {
+func (r *mockedDataRepository) Init() error {
+	r.Data = make(map[string]map[string]api.Document)
 	return nil
 }
 
-func (r mockedDataRepository) Get(document api.DocumentRef) (api.Document, error) {
+func (r *mockedDataRepository) Get(document api.DocumentRef) (api.Document, error) {
 
 	c := document.Collection().String()
-	col, found := r[c]
+	col, found := r.Data[c]
 
 	if !found {
 		return api.Document{}, notFound("document not found")
@@ -87,9 +92,9 @@ func (a SortDocuments) Swap(i, j int) {
 	a.docs[i], a.docs[j] = a.docs[j], a.docs[i]
 }
 
-func (r mockedDataRepository) GetAll(c api.CollectionRef, orderBy []string, limit int) ([]api.Document, error) {
+func (r *mockedDataRepository) GetAll(c api.CollectionRef, orderBy []string, limit int) ([]api.Document, error) {
 
-	col, found := r[c.String()]
+	col, found := r.Data[c.String()]
 
 	if !found {
 		return nil, notFound("collection not found")
@@ -114,9 +119,9 @@ func (r mockedDataRepository) GetAll(c api.CollectionRef, orderBy []string, limi
 	return res, nil
 }
 
-func (r mockedDataRepository) Add(c api.CollectionRef, payload api.DocumentProperties) (api.Document, error) {
+func (r *mockedDataRepository) Add(c api.CollectionRef, payload api.DocumentProperties) (api.Document, error) {
 
-	col, found := r[c.String()]
+	col, found := r.Data[c.String()]
 
 	if !found {
 		col = make(map[string]api.Document)
@@ -124,38 +129,44 @@ func (r mockedDataRepository) Add(c api.CollectionRef, payload api.DocumentPrope
 
 	id := fmt.Sprintf("ID_%d", len(col)+1)
 
+	now := r.Now
 	col[id] = api.Document{
-		ID:         id,
-		Properties: payload,
+		ID:                   id,
+		CreationDate:         &now,
+		LastModificationDate: &now,
+		Properties:           payload,
 	}
 
-	r[c.String()] = col
+	r.Data[c.String()] = col
 
 	return col[id], nil
 }
 
-func (r mockedDataRepository) Put(document api.DocumentRef, payload api.DocumentProperties) error {
+func (r *mockedDataRepository) Put(document api.DocumentRef, payload api.DocumentProperties) error {
 
 	c := document.Collection().String()
-	col, found := r[c]
+	col, found := r.Data[c]
 
 	if !found {
 		col = make(map[string]api.Document)
 	}
 
+	now := r.Now
 	col[document.ID()] = api.Document{
-		ID:         document.ID(),
-		Properties: payload,
+		ID:                   document.ID(),
+		CreationDate:         &now,
+		LastModificationDate: &now,
+		Properties:           payload,
 	}
 
-	r[c] = col
+	r.Data[c] = col
 
 	return nil
 }
-func (r mockedDataRepository) Patch(document api.DocumentRef, payload api.DocumentProperties) error {
+func (r *mockedDataRepository) Patch(document api.DocumentRef, payload api.DocumentProperties) error {
 
 	c := document.Collection().String()
-	col, found := r[c]
+	col, found := r.Data[c]
 
 	if !found {
 		col = make(map[string]api.Document)
@@ -163,31 +174,34 @@ func (r mockedDataRepository) Patch(document api.DocumentRef, payload api.Docume
 
 	d := col[document.ID()]
 
+	now := r.Now
+	d.LastModificationDate = &now
+
 	for k, v := range payload {
 		d.Properties[k] = v
 	}
 
 	col[document.ID()] = d
-	r[c] = col
+	r.Data[c] = col
 
 	return nil
 }
-func (r mockedDataRepository) Delete(document api.DocumentRef) error {
+func (r *mockedDataRepository) Delete(document api.DocumentRef) error {
 
 	c := document.Collection().String()
-	col, found := r[c]
+	col, found := r.Data[c]
 
 	if found {
 		delete(col, document.ID())
 	}
 
-	r[c] = col
+	r.Data[c] = col
 
 	return nil
 }
-func (r mockedDataRepository) DeleteCollection(collection api.CollectionRef) error {
+func (r *mockedDataRepository) DeleteCollection(collection api.CollectionRef) error {
 
-	delete(r, collection.String())
+	delete(r.Data, collection.String())
 
 	return nil
 }

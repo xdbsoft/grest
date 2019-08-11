@@ -3,6 +3,7 @@ package postgresql
 import (
 	"database/sql"
 	"encoding/json"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -53,8 +54,8 @@ func (r *repository) Init() error {
 			collection text NOT NULL,
 			id         character varying(126) NOT NULL,
 			content    jsonb,
-			created    time with time zone NOT NULL DEFAULT now(),
-			updated    time with time zone NOT NULL DEFAULT now(),
+			created    timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated    timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			CONSTRAINT t_document_pkey PRIMARY KEY (collection, id)
 		)`); err != nil {
 			return errors.Wrap(err, "CREATE TABLE t_document failed")
@@ -65,7 +66,7 @@ func (r *repository) Init() error {
 
 func (r *repository) Get(d api.DocumentRef) (api.Document, error) {
 
-	rows, err := r.db.Query("SELECT content FROM t_document WHERE collection=$1 AND id=$2", d.Collection().String(), d.ID())
+	rows, err := r.db.Query("SELECT content, created, updated FROM t_document WHERE collection=$1 AND id=$2", d.Collection().String(), d.ID())
 	if err != nil {
 		return api.Document{}, errors.Wrap(err, "Select query failed")
 	}
@@ -75,7 +76,8 @@ func (r *repository) Get(d api.DocumentRef) (api.Document, error) {
 	}
 
 	var s []byte
-	if err := rows.Scan(&s); err != nil {
+	var created, updated time.Time
+	if err := rows.Scan(&s, &created, &updated); err != nil {
 		return api.Document{}, errors.Wrap(err, "DB retrieval failed")
 	}
 
@@ -85,14 +87,16 @@ func (r *repository) Get(d api.DocumentRef) (api.Document, error) {
 	}
 
 	return api.Document{
-		ID:         d.ID(),
-		Properties: content,
+		ID:                   d.ID(),
+		CreationDate:         &created,
+		LastModificationDate: &updated,
+		Properties:           content,
 	}, nil
 }
 
 func (r *repository) GetAll(c api.CollectionRef, orderBy []string, limit int) ([]api.Document, error) {
 
-	rows, err := r.db.Query("SELECT id, content FROM t_document WHERE collection=$1 ORDER BY id LIMIT $2", c.String(), limit)
+	rows, err := r.db.Query("SELECT id, created, updated, content FROM t_document WHERE collection=$1 ORDER BY id LIMIT $2", c.String(), limit)
 	if err != nil {
 		return nil, errors.Wrap(err, "DB query failed")
 	}
@@ -101,7 +105,8 @@ func (r *repository) GetAll(c api.CollectionRef, orderBy []string, limit int) ([
 	for rows.Next() {
 		var id string
 		var b []byte
-		if err := rows.Scan(&id, &b); err != nil {
+		var created, updated time.Time
+		if err := rows.Scan(&id, &created, &updated, &b); err != nil {
 			return nil, errors.Wrap(err, "DB retrieval failed")
 		}
 
@@ -111,8 +116,10 @@ func (r *repository) GetAll(c api.CollectionRef, orderBy []string, limit int) ([
 		}
 
 		result = append(result, api.Document{
-			ID:         id,
-			Properties: content,
+			ID:                   id,
+			CreationDate:         &created,
+			LastModificationDate: &updated,
+			Properties:           content,
 		})
 	}
 
@@ -148,7 +155,7 @@ func (r *repository) Put(d api.DocumentRef, payload api.DocumentProperties) erro
 		return errors.Wrap(err, "unable to encode payload")
 	}
 
-	if _, err := r.db.Exec("INSERT INTO t_document (collection, id, content) VALUES ($1,$2,$3) ON CONFLICT(collection,id) DO UPDATE SET content=$3", d.Collection().String(), d.ID(), &b); err != nil {
+	if _, err := r.db.Exec("INSERT INTO t_document (collection, id, content) VALUES ($1,$2,$3) ON CONFLICT(collection,id) DO UPDATE SET content=$3,updated=CURRENT_TIMESTAMP", d.Collection().String(), d.ID(), &b); err != nil {
 		return errors.Wrap(err, "unable to insert or update document")
 	}
 
@@ -161,7 +168,7 @@ func (r *repository) Patch(d api.DocumentRef, payload api.DocumentProperties) er
 		return errors.Wrap(err, "unable to encode payload")
 	}
 
-	if _, err := r.db.Exec("UPDATE t_document SET content = (content || $1) WHERE collection=$2 AND id=$3", &b, d.Collection().String(), d.ID()); err != nil {
+	if _, err := r.db.Exec("UPDATE t_document SET content = (content || $1),updated=CURRENT_TIMESTAMP WHERE collection=$2 AND id=$3", &b, d.Collection().String(), d.ID()); err != nil {
 		return errors.Wrap(err, "unable to update document")
 	}
 
