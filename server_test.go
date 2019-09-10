@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"io/ioutil"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -14,17 +15,18 @@ import (
 type testRequest struct {
 	method              string
 	url                 string
+	headers             map[string]string
 	body                string
 	expectedCode        int
+	expectedHeaders     map[string]string
 	expectedContentType string
 	expectedBody        string
 }
 
 type testCase struct {
-	collections    []api.CollectionDefinition
-	data           map[string]map[string]api.Document
-	requests       []testRequest
-	checkDatastore func(data map[string]map[string]api.Document, t *testing.T)
+	collections []api.CollectionDefinition
+	data        map[string]map[string]api.Document
+	requests    []testRequest
 }
 
 func (c testCase) Run(t *testing.T) {
@@ -50,6 +52,12 @@ func (c testCase) Run(t *testing.T) {
 		}
 
 		req := httptest.NewRequest(request.method, request.url, b)
+		if request.headers != nil {
+			for key, value := range request.headers {
+				req.Header.Add(key, value)
+			}
+		}
+
 		w := httptest.NewRecorder()
 
 		s.ServeHTTP(w, req)
@@ -59,6 +67,15 @@ func (c testCase) Run(t *testing.T) {
 
 		if resp.StatusCode != request.expectedCode {
 			t.Errorf("Request %d: Unexpected status code, expected %d, got %d", j, request.expectedCode, resp.StatusCode)
+		}
+
+		if request.expectedHeaders != nil {
+			for key, expectedValue := range request.expectedHeaders {
+				value := resp.Header.Get(key)
+				if value != expectedValue {
+					t.Errorf("Request %d: Unexpected header %s, expected %s, got %s", j, key, expectedValue, value)
+				}
+			}
 		}
 
 		contentType := resp.Header.Get("Content-Type")
@@ -73,8 +90,9 @@ func (c testCase) Run(t *testing.T) {
 
 		mock.Now = mock.Now.Add(1 * time.Hour)
 	}
-
 }
+
+var aDate = time.Date(2008, 8, 30, 15, 25, 0, 0, time.UTC)
 
 func TestServeHTTP_Get_Document(t *testing.T) {
 
@@ -86,8 +104,10 @@ func TestServeHTTP_Get_Document(t *testing.T) {
 		},
 		data: map[string]map[string]api.Document{
 			"test": {"doc1": api.Document{
-				ID:         "doc1",
-				Properties: map[string]interface{}{"k": "v"},
+				ID:                   "doc1",
+				CreationDate:         aDate,
+				LastModificationDate: aDate,
+				Properties:           map[string]interface{}{"k": "v"},
 			}},
 		},
 		requests: []testRequest{
@@ -96,8 +116,46 @@ func TestServeHTTP_Get_Document(t *testing.T) {
 				url:                 "http://example.com/test/doc1",
 				expectedCode:        200,
 				expectedContentType: "application/json",
-				expectedBody: `{"id":"doc1","properties":{"k":"v"}}
+				expectedHeaders:     map[string]string{"ETag": `"f21bd9d57dc248f0be1d1e0e4ad3a15796eb8f03"`, "Last-Modified": "Sat, 30 Aug 2008 15:25:00 GMT"},
+				expectedBody: `{"id":"doc1","creationDate":"2008-08-30T15:25:00Z","lastModificationDate":"2008-08-30T15:25:00Z","properties":{"k":"v"}}
 `,
+			},
+		},
+	}
+
+	c.Run(t)
+}
+
+func TestServeHTTP_Get_Document_NotModified(t *testing.T) {
+
+	c := testCase{
+		collections: []api.CollectionDefinition{
+			{
+				Path: api.CollectionRef{"test"},
+			},
+		},
+		data: map[string]map[string]api.Document{
+			"test": {"doc1": api.Document{
+				ID:                   "doc1",
+				CreationDate:         aDate,
+				LastModificationDate: aDate,
+				Properties:           map[string]interface{}{"k": "v"},
+			}},
+		},
+		requests: []testRequest{
+			{
+				method:          "GET",
+				url:             "http://example.com/test/doc1",
+				headers:         map[string]string{"If-None-Match": `"f21bd9d57dc248f0be1d1e0e4ad3a15796eb8f03"`},
+				expectedCode:    304,
+				expectedHeaders: map[string]string{"ETag": `"f21bd9d57dc248f0be1d1e0e4ad3a15796eb8f03"`},
+			},
+			{
+				method:          "GET",
+				url:             "http://example.com/test/doc1",
+				headers:         map[string]string{"If-Modified-Since": aDate.UTC().Format(http.TimeFormat)},
+				expectedCode:    304,
+				expectedHeaders: map[string]string{"ETag": `"f21bd9d57dc248f0be1d1e0e4ad3a15796eb8f03"`, "Last-Modified": "Sat, 30 Aug 2008 15:25:00 GMT"},
 			},
 		},
 	}
@@ -199,12 +257,16 @@ func TestServeHTTP_Get_Collection(t *testing.T) {
 		data: map[string]map[string]api.Document{
 			"test": {
 				"doc1": api.Document{
-					ID:         "doc1",
-					Properties: map[string]interface{}{"k": "v"},
+					ID:                   "doc1",
+					CreationDate:         aDate,
+					LastModificationDate: aDate,
+					Properties:           map[string]interface{}{"k": "v"},
 				},
 				"doc2": api.Document{
-					ID:         "doc2",
-					Properties: map[string]interface{}{"k": "a"},
+					ID:                   "doc2",
+					CreationDate:         aDate,
+					LastModificationDate: aDate,
+					Properties:           map[string]interface{}{"k": "a"},
 				},
 			},
 		},
@@ -214,7 +276,7 @@ func TestServeHTTP_Get_Collection(t *testing.T) {
 				url:                 "http://example.com/test",
 				expectedCode:        200,
 				expectedContentType: "application/json",
-				expectedBody: `{"id":"test","features":[{"id":"doc1","properties":{"k":"v"}},{"id":"doc2","properties":{"k":"a"}}]}
+				expectedBody: `{"id":"test","features":[{"id":"doc1","creationDate":"2008-08-30T15:25:00Z","lastModificationDate":"2008-08-30T15:25:00Z","properties":{"k":"v"}},{"id":"doc2","creationDate":"2008-08-30T15:25:00Z","lastModificationDate":"2008-08-30T15:25:00Z","properties":{"k":"a"}}]}
 `,
 			},
 			{
@@ -222,7 +284,7 @@ func TestServeHTTP_Get_Collection(t *testing.T) {
 				url:                 "http://example.com/test?limit=10",
 				expectedCode:        200,
 				expectedContentType: "application/json",
-				expectedBody: `{"id":"test","features":[{"id":"doc1","properties":{"k":"v"}},{"id":"doc2","properties":{"k":"a"}}]}
+				expectedBody: `{"id":"test","features":[{"id":"doc1","creationDate":"2008-08-30T15:25:00Z","lastModificationDate":"2008-08-30T15:25:00Z","properties":{"k":"v"}},{"id":"doc2","creationDate":"2008-08-30T15:25:00Z","lastModificationDate":"2008-08-30T15:25:00Z","properties":{"k":"a"}}]}
 `,
 			},
 			{
@@ -230,7 +292,7 @@ func TestServeHTTP_Get_Collection(t *testing.T) {
 				url:                 "http://example.com/test?limit=1&orderBy=k",
 				expectedCode:        200,
 				expectedContentType: "application/json",
-				expectedBody: `{"id":"test","features":[{"id":"doc2","properties":{"k":"a"}}]}
+				expectedBody: `{"id":"test","features":[{"id":"doc2","creationDate":"2008-08-30T15:25:00Z","lastModificationDate":"2008-08-30T15:25:00Z","properties":{"k":"a"}}]}
 `,
 			},
 		},
@@ -248,8 +310,10 @@ func TestServeHTTP_Get_Print(t *testing.T) {
 		},
 		data: map[string]map[string]api.Document{
 			"test": {"doc1": api.Document{
-				ID:         "doc1",
-				Properties: map[string]interface{}{"k": "v"},
+				ID:                   "doc1",
+				CreationDate:         aDate,
+				LastModificationDate: aDate,
+				Properties:           map[string]interface{}{"k": "v"},
 			}},
 		},
 		requests: []testRequest{
@@ -260,6 +324,8 @@ func TestServeHTTP_Get_Print(t *testing.T) {
 				expectedContentType: "application/json",
 				expectedBody: `{
   "id": "doc1",
+  "creationDate": "2008-08-30T15:25:00Z",
+  "lastModificationDate": "2008-08-30T15:25:00Z",
   "properties": {
     "k": "v"
   }
@@ -508,11 +574,15 @@ func TestServeHTTP_Get_RuleOnPath(t *testing.T) {
 	c := testCase{
 		data: map[string]map[string]api.Document{
 			"test": {"101": api.Document{
-				ID:         "101",
-				Properties: map[string]interface{}{"k": "v"},
+				ID:                   "101",
+				CreationDate:         aDate,
+				LastModificationDate: aDate,
+				Properties:           map[string]interface{}{"k": "v"},
 			}, "099": api.Document{
-				ID:         "099",
-				Properties: map[string]interface{}{"k": "v"},
+				ID:                   "099",
+				CreationDate:         aDate,
+				LastModificationDate: aDate,
+				Properties:           map[string]interface{}{"k": "v"},
 			}},
 		},
 		collections: []api.CollectionDefinition{
@@ -537,7 +607,7 @@ func TestServeHTTP_Get_RuleOnPath(t *testing.T) {
 				url:                 "http://example.com/test/101",
 				expectedCode:        200,
 				expectedContentType: "application/json",
-				expectedBody: `{"id":"101","properties":{"k":"v"}}
+				expectedBody: `{"id":"101","creationDate":"2008-08-30T15:25:00Z","lastModificationDate":"2008-08-30T15:25:00Z","properties":{"k":"v"}}
 `,
 			},
 			{
@@ -558,8 +628,10 @@ func TestServeHTTP_Get_RuleOnUser(t *testing.T) {
 	c := testCase{
 		data: map[string]map[string]api.Document{
 			"test": {"abcd": api.Document{
-				ID:         "abcd",
-				Properties: map[string]interface{}{"k": "v"},
+				ID:                   "abcd",
+				CreationDate:         aDate,
+				LastModificationDate: aDate,
+				Properties:           map[string]interface{}{"k": "v"},
 			}},
 		},
 		collections: []api.CollectionDefinition{
@@ -584,7 +656,7 @@ func TestServeHTTP_Get_RuleOnUser(t *testing.T) {
 				url:                 "http://example.com/test/abcd?auth=abcd||",
 				expectedCode:        200,
 				expectedContentType: "application/json",
-				expectedBody: `{"id":"abcd","properties":{"k":"v"}}
+				expectedBody: `{"id":"abcd","creationDate":"2008-08-30T15:25:00Z","lastModificationDate":"2008-08-30T15:25:00Z","properties":{"k":"v"}}
 `,
 			},
 			{

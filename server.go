@@ -1,6 +1,9 @@
 package grest
 
 import (
+	"crypto/sha1"
+	"encoding/gob"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log"
@@ -181,11 +184,45 @@ func (s *server) getTarget(r *http.Request) (api.ObjectRef, error) {
 	return api.ObjectRef(items), nil
 }
 
+func (s *server) computeEtag(data interface{}) (string, error) {
+
+	h := sha1.New()
+	enc := gob.NewEncoder(h)
+	err := enc.Encode(data)
+	if err != nil {
+		return "", err
+	}
+
+	return `"` + hex.EncodeToString(h.Sum(nil)) + `"`, nil
+}
+
 func (s *server) handleResponse(w http.ResponseWriter, r *http.Request, data interface{}) {
 
 	if data == nil {
 		w.WriteHeader(http.StatusNoContent)
 	} else {
+
+		// Handle ETag / If-None-Match
+		etag, err := s.computeEtag(data)
+		if err == nil && len(etag) > 0 {
+			w.Header().Set("ETag", etag)
+
+			if r.Header.Get("If-None-Match") == etag {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
+
+		// Handle Last-Modified / If-Modified-Since
+		if c, ok := data.(api.Cacheable); ok {
+			w.Header().Set("Last-Modified", c.GetLastModified().UTC().Format(http.TimeFormat))
+
+			ifModifiedSince, err := http.ParseTime(r.Header.Get("If-Modified-Since"))
+			if err == nil && !c.GetLastModified().After(ifModifiedSince) {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
 
 		w.Header().Add("Content-Type", "application/json")
 
@@ -202,7 +239,7 @@ func (s *server) handleResponse(w http.ResponseWriter, r *http.Request, data int
 			encoder.SetIndent("", "  ")
 		}
 
-		err := encoder.Encode(data)
+		err = encoder.Encode(data)
 		if err != nil {
 			handleError(w, r, err)
 			return

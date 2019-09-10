@@ -9,9 +9,13 @@ import (
 //Document represents a document in a collection
 type Document struct {
 	ID                   string                 `json:"id"`
-	CreationDate         *time.Time             `json:"creationDate,omitempty"`
-	LastModificationDate *time.Time             `json:"lastModificationDate,omitempty"`
+	CreationDate         time.Time              `json:"creationDate,omitempty"`
+	LastModificationDate time.Time              `json:"lastModificationDate,omitempty"`
 	Properties           map[string]interface{} `json:"properties"`
+}
+
+func (d Document) GetLastModified() time.Time {
+	return d.LastModificationDate
 }
 
 //DocumentProperties represents the properties of the document

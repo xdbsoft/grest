@@ -88,8 +88,8 @@ func (r *repository) Get(d api.DocumentRef) (api.Document, error) {
 
 	return api.Document{
 		ID:                   d.ID(),
-		CreationDate:         &created,
-		LastModificationDate: &updated,
+		CreationDate:         created,
+		LastModificationDate: updated,
 		Properties:           content,
 	}, nil
 }
@@ -117,8 +117,8 @@ func (r *repository) GetAll(c api.CollectionRef, orderBy []string, limit int) ([
 
 		result = append(result, api.Document{
 			ID:                   id,
-			CreationDate:         &created,
-			LastModificationDate: &updated,
+			CreationDate:         created,
+			LastModificationDate: updated,
 			Properties:           content,
 		})
 	}

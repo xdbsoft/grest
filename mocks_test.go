@@ -132,8 +132,8 @@ func (r *mockedDataRepository) Add(c api.CollectionRef, payload api.DocumentProp
 	now := r.Now
 	col[id] = api.Document{
 		ID:                   id,
-		CreationDate:         &now,
-		LastModificationDate: &now,
+		CreationDate:         now,
+		LastModificationDate: now,
 		Properties:           payload,
 	}
 
@@ -154,8 +154,8 @@ func (r *mockedDataRepository) Put(document api.DocumentRef, payload api.Documen
 	now := r.Now
 	col[document.ID()] = api.Document{
 		ID:                   document.ID(),
-		CreationDate:         &now,
-		LastModificationDate: &now,
+		CreationDate:         now,
+		LastModificationDate: now,
 		Properties:           payload,
 	}
 
@@ -175,7 +175,7 @@ func (r *mockedDataRepository) Patch(document api.DocumentRef, payload api.Docum
 	d := col[document.ID()]
 
 	now := r.Now
-	d.LastModificationDate = &now
+	d.LastModificationDate = now
 
 	for k, v := range payload {
 		d.Properties[k] = v

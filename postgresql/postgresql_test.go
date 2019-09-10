@@ -59,14 +59,8 @@ func TestPutPatchGetDeleteDocument(t *testing.T) {
 		t.Errorf("Invalid ID: got '%s', expected 'doc1'", res.ID)
 	}
 
-	if res.CreationDate == nil {
-		t.Error("Undefined creation date")
-	}
-	if res.LastModificationDate == nil {
-		t.Error("Undefined last modification date")
-	}
-	if *res.CreationDate != *res.LastModificationDate {
-		t.Error("Different creation and last modification dates", *res.CreationDate, *res.LastModificationDate)
+	if res.CreationDate != res.LastModificationDate {
+		t.Error("Different creation and last modification dates", res.CreationDate, res.LastModificationDate)
 	}
 
 	v, ok := res.Properties["k"]
@@ -100,14 +94,8 @@ func TestPutPatchGetDeleteDocument(t *testing.T) {
 	if res.ID != "doc1" {
 		t.Errorf("Invalid ID: got '%s', expected 'doc1'", res.ID)
 	}
-	if res.CreationDate == nil {
-		t.Error("Undefined creation date")
-	}
-	if res.LastModificationDate == nil {
-		t.Error("Undefined last modification date")
-	}
-	if !res.CreationDate.Before(*res.LastModificationDate) {
-		t.Error("Creation date expected before last modification date", *res.CreationDate, *res.LastModificationDate)
+	if !res.CreationDate.Before(res.LastModificationDate) {
+		t.Error("Creation date expected before last modification date", res.CreationDate, res.LastModificationDate)
 	}
 
 	v, ok = res.Properties["k"]
