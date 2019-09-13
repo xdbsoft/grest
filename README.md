@@ -25,19 +25,19 @@
 					Name: "test",
 					Rules: []rules.Rule{
 						{
-								Path: "test/{userId}/sub/{doc}",
-								Allow: []rules.Allow{
-									{
-										Methods: []rules.Method{"READ"},
-										If:      `path.doc != "private" || path.userId == user.id`,
-									},
-									{
-										Methods: []rules.Method{"WRITE","DELETE"},
-										If:      `path.userId == user.id`,
-									},
+							Path: "test/{userId}/sub/{doc}",
+							Allow: []rules.Allow{
+								{
+									Methods: []rules.Method{"READ"},
+									If:      `path.doc != "private" || path.userId == user.id`,
 								},
+								{
+									Methods: []rules.Method{"WRITE","DELETE"},
+									If:      `path.userId == user.id`,
+								},
+							},
 						},
-					}
+					},
 				},
 			},
 		}
