@@ -12,6 +12,7 @@
 	import (
 		"net/http"
 		"github.com/xdbsoft/grest"
+		"github.com/xdbsoft/grest/rules"
 	)
 
 	func main() {
@@ -19,19 +20,19 @@
 		cfg := grest.Config{
 			OpenIDConnectIssuer: "https://login.okiapps.com/", // You may use any OIDC provider (Google, Github, or self hosted)
 			DBConnStr: "user=nestor password=nestor dbname=nestor sslmode=disable", //Connection string to the PostgreSQL database
-			Collections: []api.CollectionDefinition{
+			Collections: []grest.CollectionDefinition{
 				{
-					Path: "test",
-					Rules: []api.Rule{
+					Name: "test",
+					Rules: []rules.Rule{
 						{
 								Path: "test/{userId}/sub/{doc}",
-								Allow: []api.Allow{
+								Allow: []rules.Allow{
 									{
-										Methods: []api.Method{"READ"},
+										Methods: []rules.Method{"READ"},
 										If:      `path.doc != "private" || path.userId == user.id`,
 									},
 									{
-										Methods: []api.Method{"WRITE","DELETE"},
+										Methods: []rules.Method{"WRITE","DELETE"},
 										If:      `path.userId == user.id`,
 									},
 								},

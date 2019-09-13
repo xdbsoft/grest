@@ -49,7 +49,7 @@ func (r *mockedDataRepository) Init() error {
 	return nil
 }
 
-func (r *mockedDataRepository) Get(document api.DocumentRef) (api.Document, error) {
+func (r *mockedDataRepository) Get(document api.ObjectRef) (api.Document, error) {
 
 	c := document.Collection().String()
 	col, found := r.Data[c]
@@ -92,7 +92,7 @@ func (a SortDocuments) Swap(i, j int) {
 	a.docs[i], a.docs[j] = a.docs[j], a.docs[i]
 }
 
-func (r *mockedDataRepository) GetAll(c api.CollectionRef, orderBy []string, limit int) ([]api.Document, error) {
+func (r *mockedDataRepository) GetAll(c api.ObjectRef, orderBy []string, limit int) ([]api.Document, error) {
 
 	col, found := r.Data[c.String()]
 
@@ -119,7 +119,7 @@ func (r *mockedDataRepository) GetAll(c api.CollectionRef, orderBy []string, lim
 	return res, nil
 }
 
-func (r *mockedDataRepository) Add(c api.CollectionRef, payload api.DocumentProperties) (api.Document, error) {
+func (r *mockedDataRepository) Add(c api.ObjectRef, payload api.DocumentProperties) (api.Document, error) {
 
 	col, found := r.Data[c.String()]
 
@@ -142,7 +142,7 @@ func (r *mockedDataRepository) Add(c api.CollectionRef, payload api.DocumentProp
 	return col[id], nil
 }
 
-func (r *mockedDataRepository) Put(document api.DocumentRef, payload api.DocumentProperties) error {
+func (r *mockedDataRepository) Put(document api.ObjectRef, payload api.DocumentProperties) error {
 
 	c := document.Collection().String()
 	col, found := r.Data[c]
@@ -163,7 +163,7 @@ func (r *mockedDataRepository) Put(document api.DocumentRef, payload api.Documen
 
 	return nil
 }
-func (r *mockedDataRepository) Patch(document api.DocumentRef, payload api.DocumentProperties) error {
+func (r *mockedDataRepository) Patch(document api.ObjectRef, payload api.DocumentProperties) error {
 
 	c := document.Collection().String()
 	col, found := r.Data[c]
@@ -186,7 +186,7 @@ func (r *mockedDataRepository) Patch(document api.DocumentRef, payload api.Docum
 
 	return nil
 }
-func (r *mockedDataRepository) Delete(document api.DocumentRef) error {
+func (r *mockedDataRepository) Delete(document api.ObjectRef) error {
 
 	c := document.Collection().String()
 	col, found := r.Data[c]
@@ -199,7 +199,7 @@ func (r *mockedDataRepository) Delete(document api.DocumentRef) error {
 
 	return nil
 }
-func (r *mockedDataRepository) DeleteCollection(collection api.CollectionRef) error {
+func (r *mockedDataRepository) DeleteCollection(collection api.ObjectRef) error {
 
 	delete(r.Data, collection.String())
 

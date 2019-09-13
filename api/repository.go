@@ -4,11 +4,11 @@ package api
 type Repository interface {
 	Init() error
 
-	Get(document DocumentRef) (Document, error)
-	GetAll(collection CollectionRef, orderBy []string, limit int) ([]Document, error)
-	Add(collection CollectionRef, payload DocumentProperties) (Document, error)
-	Put(document DocumentRef, payload DocumentProperties) error
-	Patch(document DocumentRef, payload DocumentProperties) error
-	Delete(document DocumentRef) error
-	DeleteCollection(collection CollectionRef) error
+	Get(document ObjectRef) (Document, error)
+	GetAll(collection ObjectRef, orderBy []string, limit int) ([]Document, error)
+	Add(collection ObjectRef, payload DocumentProperties) (Document, error)
+	Put(document ObjectRef, payload DocumentProperties) error
+	Patch(document ObjectRef, payload DocumentProperties) error
+	Delete(document ObjectRef) error
+	DeleteCollection(collection ObjectRef) error
 }

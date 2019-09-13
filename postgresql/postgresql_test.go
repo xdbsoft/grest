@@ -36,7 +36,7 @@ func TestNew(t *testing.T) {
 
 func TestPutPatchGetDeleteDocument(t *testing.T) {
 
-	d := api.DocumentRef{"test", "doc1"}
+	d := api.ObjectRef{"test", "doc1"}
 	payload := make(api.DocumentProperties)
 	payload["k"] = "v"
 	payload["n"] = 123
@@ -145,7 +145,7 @@ func TestAddGetDeleteCollection(t *testing.T) {
 		t.Error(err)
 	}
 
-	c := api.CollectionRef{"test"}
+	c := api.ObjectRef{"test"}
 	d, err := r.Add(c, payload)
 	if err != nil {
 		t.Error(err)
@@ -154,7 +154,7 @@ func TestAddGetDeleteCollection(t *testing.T) {
 		t.Error("Document ID should be returned")
 	}
 
-	dref := api.DocumentRef{"test", d.ID}
+	dref := api.ObjectRef{"test", d.ID}
 
 	res, err := r.Get(dref)
 	if err != nil {

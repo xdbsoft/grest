@@ -64,7 +64,7 @@ func (r *repository) Init() error {
 	return nil
 }
 
-func (r *repository) Get(d api.DocumentRef) (api.Document, error) {
+func (r *repository) Get(d api.ObjectRef) (api.Document, error) {
 
 	rows, err := r.db.Query("SELECT content, created, updated FROM t_document WHERE collection=$1 AND id=$2", d.Collection().String(), d.ID())
 	if err != nil {
@@ -94,7 +94,7 @@ func (r *repository) Get(d api.DocumentRef) (api.Document, error) {
 	}, nil
 }
 
-func (r *repository) GetAll(c api.CollectionRef, orderBy []string, limit int) ([]api.Document, error) {
+func (r *repository) GetAll(c api.ObjectRef, orderBy []string, limit int) ([]api.Document, error) {
 
 	rows, err := r.db.Query("SELECT id, created, updated, content FROM t_document WHERE collection=$1 ORDER BY id LIMIT $2", c.String(), limit)
 	if err != nil {
@@ -126,7 +126,7 @@ func (r *repository) GetAll(c api.CollectionRef, orderBy []string, limit int) ([
 	return result, nil
 }
 
-func (r *repository) Add(c api.CollectionRef, payload api.DocumentProperties) (api.Document, error) {
+func (r *repository) Add(c api.ObjectRef, payload api.DocumentProperties) (api.Document, error) {
 
 	id := api.NextID()
 
@@ -148,7 +148,7 @@ func (r *repository) Add(c api.CollectionRef, payload api.DocumentProperties) (a
 	return d, nil
 }
 
-func (r *repository) Put(d api.DocumentRef, payload api.DocumentProperties) error {
+func (r *repository) Put(d api.ObjectRef, payload api.DocumentProperties) error {
 
 	b, err := json.Marshal(&payload)
 	if err != nil {
@@ -161,7 +161,7 @@ func (r *repository) Put(d api.DocumentRef, payload api.DocumentProperties) erro
 
 	return nil
 }
-func (r *repository) Patch(d api.DocumentRef, payload api.DocumentProperties) error {
+func (r *repository) Patch(d api.ObjectRef, payload api.DocumentProperties) error {
 
 	b, err := json.Marshal(&payload)
 	if err != nil {
@@ -175,7 +175,7 @@ func (r *repository) Patch(d api.DocumentRef, payload api.DocumentProperties) er
 	return nil
 }
 
-func (r *repository) Delete(d api.DocumentRef) error {
+func (r *repository) Delete(d api.ObjectRef) error {
 
 	if _, err := r.db.Exec("DELETE FROM t_document where collection=$1 and id=$2", d.Collection().String(), d.ID()); err != nil {
 		return errors.Wrap(err, "unable to delete document")
@@ -184,7 +184,7 @@ func (r *repository) Delete(d api.DocumentRef) error {
 	return nil
 }
 
-func (r *repository) DeleteCollection(c api.CollectionRef) error {
+func (r *repository) DeleteCollection(c api.ObjectRef) error {
 
 	if _, err := r.db.Exec("DELETE FROM t_document where collection=$1", c.String()); err != nil {
 		return errors.Wrap(err, "unable to delete collection")

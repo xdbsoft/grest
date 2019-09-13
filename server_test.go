@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/xdbsoft/grest/api"
+	"github.com/xdbsoft/grest/rules"
 )
 
 type testRequest struct {
@@ -24,16 +25,18 @@ type testRequest struct {
 }
 
 type testCase struct {
-	collections []api.CollectionDefinition
+	collections []CollectionDefinition
 	data        map[string]map[string]api.Document
 	requests    []testRequest
 }
 
 func (c testCase) Run(t *testing.T) {
 
-	colDefs := make(map[string]api.CollectionDefinition)
+	t.Helper()
+
+	colDefs := make(map[string]CollectionDefinition)
 	for _, cd := range c.collections {
-		colDefs[cd.Path.String()] = cd
+		colDefs[cd.Name] = cd
 	}
 
 	mock := &mockedDataRepository{Data: c.data, Now: time.Date(2018, 8, 24, 5, 0, 0, 0, time.UTC)}
@@ -42,7 +45,7 @@ func (c testCase) Run(t *testing.T) {
 		Collections:    colDefs,
 		Authenticator:  mockedAuthenticator{},
 		DataRepository: mock,
-		RuleChecker:    api.RuleChecker{},
+		RuleChecker:    rules.Checker{},
 	}
 
 	for j, request := range c.requests {
@@ -94,12 +97,26 @@ func (c testCase) Run(t *testing.T) {
 
 var aDate = time.Date(2008, 8, 30, 15, 25, 0, 0, time.UTC)
 
+func allowAll(path string) []rules.Rule {
+	return []rules.Rule{
+		{
+			Path: path,
+			Allow: []rules.Allow{
+				{
+					Methods: []rules.Method{rules.READ, rules.WRITE, rules.DELETE},
+				},
+			},
+		},
+	}
+}
+
 func TestServeHTTP_Get_Document(t *testing.T) {
 
 	c := testCase{
-		collections: []api.CollectionDefinition{
+		collections: []CollectionDefinition{
 			{
-				Path: api.CollectionRef{"test"},
+				Name:  "test",
+				Rules: allowAll("test/{docId}"),
 			},
 		},
 		data: map[string]map[string]api.Document{
@@ -129,9 +146,10 @@ func TestServeHTTP_Get_Document(t *testing.T) {
 func TestServeHTTP_Get_Document_NotModified(t *testing.T) {
 
 	c := testCase{
-		collections: []api.CollectionDefinition{
+		collections: []CollectionDefinition{
 			{
-				Path: api.CollectionRef{"test"},
+				Name:  "test",
+				Rules: allowAll("test/{docId}"),
 			},
 		},
 		data: map[string]map[string]api.Document{
@@ -166,9 +184,10 @@ func TestServeHTTP_Get_Document_NotModified(t *testing.T) {
 func TestServeHTTP_BadRequests(t *testing.T) {
 
 	c := testCase{
-		collections: []api.CollectionDefinition{
+		collections: []CollectionDefinition{
 			{
-				Path: api.CollectionRef{"test"},
+				Name:  "test",
+				Rules: allowAll("test/{docId}"),
 			},
 		},
 		requests: []testRequest{
@@ -249,9 +268,10 @@ func TestServeHTTP_BadRequests(t *testing.T) {
 func TestServeHTTP_Get_Collection(t *testing.T) {
 
 	c := testCase{
-		collections: []api.CollectionDefinition{
+		collections: []CollectionDefinition{
 			{
-				Path: api.CollectionRef{"test"},
+				Name:  "test",
+				Rules: allowAll("test/{docId}"),
 			},
 		},
 		data: map[string]map[string]api.Document{
@@ -303,9 +323,10 @@ func TestServeHTTP_Get_Collection(t *testing.T) {
 func TestServeHTTP_Get_Print(t *testing.T) {
 
 	c := testCase{
-		collections: []api.CollectionDefinition{
+		collections: []CollectionDefinition{
 			{
-				Path: api.CollectionRef{"test"},
+				Name:  "test",
+				Rules: allowAll("test/{docId}"),
 			},
 		},
 		data: map[string]map[string]api.Document{
@@ -341,9 +362,10 @@ func TestServeHTTP_Get_Print(t *testing.T) {
 func TestServeHTTP_Get_NotFound(t *testing.T) {
 
 	c := testCase{
-		collections: []api.CollectionDefinition{
+		collections: []CollectionDefinition{
 			{
-				Path: api.CollectionRef{"test"},
+				Name:  "test",
+				Rules: allowAll("test/{docId}"),
 			},
 		},
 		data: map[string]map[string]api.Document{
@@ -424,9 +446,10 @@ func TestServeHTTP_Get_InvalidAuth(t *testing.T) {
 func TestServeHTTP_PutGet(t *testing.T) {
 
 	c := testCase{
-		collections: []api.CollectionDefinition{
+		collections: []CollectionDefinition{
 			{
-				Path: api.CollectionRef{"test"},
+				Name:  "test",
+				Rules: allowAll("test/{docId}"),
 			},
 		},
 		data: map[string]map[string]api.Document{},
@@ -456,9 +479,10 @@ func TestServeHTTP_PutGet(t *testing.T) {
 func TestServeHTTP_PostGet_Collection(t *testing.T) {
 
 	c := testCase{
-		collections: []api.CollectionDefinition{
+		collections: []CollectionDefinition{
 			{
-				Path: api.CollectionRef{"test"},
+				Name:  "test",
+				Rules: allowAll("test/{docId}"),
 			},
 		},
 		data: map[string]map[string]api.Document{},
@@ -489,9 +513,10 @@ func TestServeHTTP_PostGet_Collection(t *testing.T) {
 func TestServeHTTP_PutPostGet(t *testing.T) {
 
 	c := testCase{
-		collections: []api.CollectionDefinition{
+		collections: []CollectionDefinition{
 			{
-				Path: api.CollectionRef{"test"},
+				Name:  "test",
+				Rules: allowAll("test/{docId}"),
 			},
 		},
 		data: map[string]map[string]api.Document{},
@@ -538,15 +563,15 @@ func TestServeHTTP_Get_IncorrectRule(t *testing.T) {
 				Properties: map[string]interface{}{"k": "v"},
 			}},
 		},
-		collections: []api.CollectionDefinition{
+		collections: []CollectionDefinition{
 			{
-				Path: api.CollectionRef{"test"},
-				Rules: []api.Rule{
+				Name: "test",
+				Rules: []rules.Rule{
 					{
 						Path: "test/{doc}",
-						Allow: []api.Allow{
+						Allow: []rules.Allow{
 							{
-								Methods: []api.Method{"READ"},
+								Methods: []rules.Method{"READ"},
 								If:      `path.doc > '100`,
 							},
 						},
@@ -585,15 +610,15 @@ func TestServeHTTP_Get_RuleOnPath(t *testing.T) {
 				Properties:           map[string]interface{}{"k": "v"},
 			}},
 		},
-		collections: []api.CollectionDefinition{
+		collections: []CollectionDefinition{
 			{
-				Path: api.CollectionRef{"test"},
-				Rules: []api.Rule{
+				Name: "test",
+				Rules: []rules.Rule{
 					{
 						Path: "test/{doc}",
-						Allow: []api.Allow{
+						Allow: []rules.Allow{
 							{
-								Methods: []api.Method{"READ"},
+								Methods: []rules.Method{"READ"},
 								If:      `path.doc > '100'`,
 							},
 						},
@@ -634,15 +659,15 @@ func TestServeHTTP_Get_RuleOnUser(t *testing.T) {
 				Properties:           map[string]interface{}{"k": "v"},
 			}},
 		},
-		collections: []api.CollectionDefinition{
+		collections: []CollectionDefinition{
 			{
-				Path: api.CollectionRef{"test"},
-				Rules: []api.Rule{
+				Name: "test",
+				Rules: []rules.Rule{
 					{
 						Path: "test/{userId}",
-						Allow: []api.Allow{
+						Allow: []rules.Allow{
 							{
-								Methods: []api.Method{"READ"},
+								Methods: []rules.Method{"READ"},
 								If:      `path.userId == user.id`,
 							},
 						},
@@ -676,9 +701,10 @@ func TestServeHTTP_Get_RuleOnUser(t *testing.T) {
 func TestServeHTTP_Delete_Document(t *testing.T) {
 
 	c := testCase{
-		collections: []api.CollectionDefinition{
+		collections: []CollectionDefinition{
 			{
-				Path: api.CollectionRef{"test"},
+				Name:  "test",
+				Rules: allowAll("test/{docId}"),
 			},
 		},
 		data: map[string]map[string]api.Document{
@@ -712,9 +738,10 @@ func TestServeHTTP_Delete_Document(t *testing.T) {
 func TestServeHTTP_Delete_Collection(t *testing.T) {
 
 	c := testCase{
-		collections: []api.CollectionDefinition{
+		collections: []CollectionDefinition{
 			{
-				Path: api.CollectionRef{"test"},
+				Name:  "test",
+				Rules: allowAll("test/{docId}"),
 			},
 		},
 		data: map[string]map[string]api.Document{
@@ -748,15 +775,15 @@ func TestServeHTTP_Delete_Collection(t *testing.T) {
 func TestServeHTTP_NotAutorized(t *testing.T) {
 
 	c := testCase{
-		collections: []api.CollectionDefinition{
+		collections: []CollectionDefinition{
 			{
-				Path: api.CollectionRef{"test"},
-				Rules: []api.Rule{
+				Name: "test",
+				Rules: []rules.Rule{
 					{
-						Path: "test",
-						Allow: []api.Allow{
+						Path: "test/{docId}",
+						Allow: []rules.Allow{
 							{
-								Methods: []api.Method{"READ", "WRITE", "DELETE"},
+								Methods: []rules.Method{"READ", "WRITE", "DELETE"},
 								If:      `"doc1" != "doc1"`,
 							},
 						},

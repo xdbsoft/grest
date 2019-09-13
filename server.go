@@ -16,6 +16,7 @@ import (
 	"github.com/xdbsoft/grest/api"
 	"github.com/xdbsoft/grest/oidc"
 	"github.com/xdbsoft/grest/postgresql"
+	"github.com/xdbsoft/grest/rules"
 )
 
 // Server instantiate a new grest server
@@ -43,22 +44,22 @@ func Server(cfg Config) (http.Handler, error) {
 	s := server{
 		Authenticator:  a,
 		DataRepository: r,
-		RuleChecker:    api.RuleChecker{},
-		Collections:    make(map[string]api.CollectionDefinition),
+		RuleChecker:    rules.Checker{},
+		Collections:    make(map[string]CollectionDefinition),
 	}
 
 	for _, c := range cfg.Collections {
-		s.Collections[c.Path.String()] = c
+		s.Collections[c.Name] = c
 	}
 
 	return &s, nil
 }
 
 type server struct {
-	Collections    map[string]api.CollectionDefinition
+	Collections    map[string]CollectionDefinition
 	Authenticator  api.Authenticator
 	DataRepository api.Repository
-	RuleChecker    api.RuleChecker
+	RuleChecker    rules.Checker
 }
 
 func getLimit(limitString string) int {
@@ -88,50 +89,47 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var data interface{}
 
-	if target.IsDocumentRef() {
-
-		docRef := api.DocumentRef(target)
+	if target.IsDocument() {
 
 		switch r.Method {
 		case "GET":
-			data, err = s.GetDocument(docRef, user)
+			data, err = s.GetDocument(target, user)
 		case "PUT":
 			var payload api.Document
 			if err := getPayload(r, &payload); err != nil {
 				handleError(w, r, err)
 				return
 			}
-			err = s.PutDocument(docRef, payload, user)
+			err = s.PutDocument(target, payload, user)
 		case "POST", "PATCH":
 			payload := make(api.DocumentProperties)
 			if err := getPayload(r, &payload); err != nil {
 				handleError(w, r, err)
 				return
 			}
-			err = s.PatchDocument(docRef, payload, user)
+			err = s.PatchDocument(target, payload, user)
 		case "DELETE":
-			err = s.DeleteDocument(docRef, user)
+			err = s.DeleteDocument(target, user)
 		default:
 			handleError(w, r, badRequest("unsupported method"))
 			return
 		}
 	} else {
-		colRef := api.CollectionRef(target)
 
 		switch r.Method {
 		case "GET":
 			limit := getLimit(r.FormValue("limit"))
 			orderBy := strings.Split(r.FormValue("orderBy"), "/")
-			data, err = s.GetCollection(colRef, limit, orderBy, user)
+			data, err = s.GetCollection(target, limit, orderBy, user)
 		case "POST":
 			payload := make(api.DocumentProperties)
 			if err := getPayload(r, &payload); err != nil {
 				handleError(w, r, err)
 				return
 			}
-			data, err = s.AddDocument(colRef, payload, user)
+			data, err = s.AddDocument(target, payload, user)
 		case "DELETE":
-			err = s.DeleteCollection(colRef, user)
+			err = s.DeleteCollection(target, user)
 		default:
 			handleError(w, r, badRequest("unsupported method"))
 			return
@@ -271,7 +269,7 @@ func handleError(w http.ResponseWriter, r *http.Request, err error) {
 	http.Error(w, "Internal server error", http.StatusInternalServerError)
 }
 
-func (s *server) checkIsAuthorized(target api.DocumentRef, user api.User, method api.Method, rules []api.Rule) error {
+func (s *server) checkIsAuthorized(target api.ObjectRef, user api.User, method rules.Method, rules []rules.Rule) error {
 
 	ok, err := s.RuleChecker.Check(rules, target, user, method)
 	if err != nil {
@@ -279,52 +277,47 @@ func (s *server) checkIsAuthorized(target api.DocumentRef, user api.User, method
 	}
 
 	if !ok {
-		return notAuthorizedError{api.ObjectRef(target)}
+		return notAuthorizedError{target}
 	}
 
 	return nil
 }
 
-func (s *server) checkIsAuthorizedForCollection(target api.CollectionRef, user api.User, method api.Method) error {
+func (s *server) checkIsAuthorizedForCollection(target api.ObjectRef, user api.User, method rules.Method) error {
 
-	collectionDef, ok := s.Collections[target.String()]
+	collectionDef, ok := s.Collections[target[0]]
 	if !ok {
-		return notFoundError{api.ObjectRef(target)}
+		return notFoundError{target}
 	}
 
 	documentRef := append(target, "*")
 
-	return s.checkIsAuthorized(api.DocumentRef(documentRef), user, method, collectionDef.Rules)
+	return s.checkIsAuthorized(documentRef, user, method, collectionDef.Rules)
 
 }
 
-func (s *server) checkIsAuthorizedForDoc(target api.DocumentRef, user api.User, method api.Method) error {
+func (s *server) checkIsAuthorizedForDoc(target api.ObjectRef, user api.User, method rules.Method) error {
 
-	collectionRef := target.Collection()
-	collectionDef, ok := s.Collections[collectionRef.String()]
-	for !ok && !collectionRef.IsRoot() {
-		collectionRef = collectionRef.Parent().Collection()
-		collectionDef, ok = s.Collections[collectionRef.String()]
-	}
+	collectionDef, ok := s.Collections[target[0]]
 	if !ok {
-		return notFoundError{api.ObjectRef(target)}
+		return notFoundError{target}
 	}
 
 	return s.checkIsAuthorized(target, user, method, collectionDef.Rules)
 }
 
-func (s *server) GetDocument(target api.DocumentRef, user api.User) (interface{}, error) {
+func (s *server) GetDocument(target api.ObjectRef, user api.User) (interface{}, error) {
 
-	if err := s.checkIsAuthorizedForDoc(target, user, api.READ); err != nil {
+	if err := s.checkIsAuthorizedForDoc(target, user, rules.READ); err != nil {
 		return nil, err
 	}
 
 	return s.DataRepository.Get(target)
 }
 
-func (s *server) GetCollection(target api.CollectionRef, limit int, orderBy []string, user api.User) (interface{}, error) {
+func (s *server) GetCollection(target api.ObjectRef, limit int, orderBy []string, user api.User) (interface{}, error) {
 
-	if err := s.checkIsAuthorizedForCollection(target, user, api.READ); err != nil {
+	if err := s.checkIsAuthorizedForCollection(target, user, rules.READ); err != nil {
 		return nil, err
 	}
 
@@ -341,18 +334,18 @@ func (s *server) GetCollection(target api.CollectionRef, limit int, orderBy []st
 	return c, nil
 }
 
-func (s *server) AddDocument(target api.CollectionRef, payload api.DocumentProperties, user api.User) (interface{}, error) {
+func (s *server) AddDocument(target api.ObjectRef, payload api.DocumentProperties, user api.User) (interface{}, error) {
 
-	if err := s.checkIsAuthorizedForCollection(target, user, api.WRITE); err != nil {
+	if err := s.checkIsAuthorizedForCollection(target, user, rules.WRITE); err != nil {
 		return nil, err
 	}
 
 	return s.DataRepository.Add(target, payload)
 }
 
-func (s *server) PutDocument(target api.DocumentRef, payload api.Document, user api.User) error {
+func (s *server) PutDocument(target api.ObjectRef, payload api.Document, user api.User) error {
 
-	if err := s.checkIsAuthorizedForDoc(target, user, api.WRITE); err != nil {
+	if err := s.checkIsAuthorizedForDoc(target, user, rules.WRITE); err != nil {
 		return err
 	}
 
@@ -363,27 +356,27 @@ func (s *server) PutDocument(target api.DocumentRef, payload api.Document, user 
 	return s.DataRepository.Put(target, payload.Properties)
 }
 
-func (s *server) PatchDocument(target api.DocumentRef, payload api.DocumentProperties, user api.User) error {
+func (s *server) PatchDocument(target api.ObjectRef, payload api.DocumentProperties, user api.User) error {
 
-	if err := s.checkIsAuthorizedForDoc(target, user, api.WRITE); err != nil {
+	if err := s.checkIsAuthorizedForDoc(target, user, rules.WRITE); err != nil {
 		return err
 	}
 
 	return s.DataRepository.Patch(target, payload)
 }
 
-func (s *server) DeleteDocument(target api.DocumentRef, user api.User) error {
+func (s *server) DeleteDocument(target api.ObjectRef, user api.User) error {
 
-	if err := s.checkIsAuthorizedForDoc(target, user, api.DELETE); err != nil {
+	if err := s.checkIsAuthorizedForDoc(target, user, rules.DELETE); err != nil {
 		return err
 	}
 
 	return s.DataRepository.Delete(target)
 }
 
-func (s *server) DeleteCollection(target api.CollectionRef, user api.User) error {
+func (s *server) DeleteCollection(target api.ObjectRef, user api.User) error {
 
-	if err := s.checkIsAuthorizedForCollection(target, user, api.DELETE); err != nil {
+	if err := s.checkIsAuthorizedForCollection(target, user, rules.DELETE); err != nil {
 		return err
 	}
 
