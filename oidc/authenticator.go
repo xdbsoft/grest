@@ -3,7 +3,6 @@ package oidc
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 
 	"github.com/coreos/go-oidc"
@@ -60,7 +59,6 @@ func (a *authenticator) Authenticate(r *http.Request) (api.User, error) {
 
 	idToken, err := a.Verifier.Verify(ctx, rawIDToken)
 	if err != nil {
-		log.Println(err)
 		return api.User{}, notAuthorizedError{}
 	}
 

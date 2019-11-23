@@ -1,19 +1,17 @@
 package rules
 
 type Rule struct {
-	Path  string  `json:"path"`
-	Allow []Allow `json:"allow"`
+	Path  string
+	Read  Allow
+	Write Allow
 }
 
 type Allow struct {
-	Methods []Method `json:"methods"`
-	If      string   `json:"if"`
+	IfPath    string //Only user, path and with available
+	IfContent string //content, user, path and with always available, newContent only for put/patch cases
+	With      []With
 }
-
-type Method string
-
-const (
-	READ   Method = "READ"
-	WRITE  Method = "WRITE"
-	DELETE Method = "DELETE"
-)
+type With struct {
+	Name string
+	Path string
+}

@@ -4,8 +4,10 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
+	"github.com/gorilla/handlers"
 	"github.com/jinzhu/configor"
 
 	"github.com/xdbsoft/grest"
@@ -40,9 +42,17 @@ func main() {
 		panic(err)
 	}
 
+	corsHandler := handlers.CORS(
+		handlers.AllowedOrigins([]string{"*"}),
+		handlers.AllowedMethods([]string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}),
+		handlers.AllowedHeaders([]string{"authorization", "content-type"}),
+	)(grestHandler)
+
+	loggedRouter := handlers.LoggingHandler(os.Stdout, corsHandler)
+
 	s := &http.Server{
 		Addr:           *listenAddr,
-		Handler:        grestHandler,
+		Handler:        loggedRouter,
 		ReadTimeout:    10 * time.Second,
 		WriteTimeout:   10 * time.Second,
 		MaxHeaderBytes: 1 << 20,

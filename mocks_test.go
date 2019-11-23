@@ -44,12 +44,51 @@ type mockedDataRepository struct {
 	Now  time.Time
 }
 
+type mockedTransaction struct {
+	Data map[string]map[string]api.Document
+	Now  time.Time
+	r    *mockedDataRepository
+}
+type mockedCursor struct {
+	data []api.Document
+	idx  int
+}
+
+func (c *mockedCursor) Close() error {
+	return nil
+}
+func (c *mockedCursor) Fetch(limit int) ([]api.Document, error) {
+
+	if c.idx+limit > len(c.data) {
+		limit = len(c.data) - c.idx
+	}
+
+	r := c.data[c.idx : c.idx+limit]
+	c.idx += limit
+	return r, nil
+}
+
 func (r *mockedDataRepository) Init() error {
 	r.Data = make(map[string]map[string]api.Document)
 	return nil
 }
+func (r *mockedDataRepository) Begin() (api.Transaction, error) {
+	return &mockedTransaction{
+		Data: r.Data,
+		Now:  r.Now,
+		r:    r,
+	}, nil
+}
 
-func (r *mockedDataRepository) Get(document api.ObjectRef) (api.Document, error) {
+func (r *mockedTransaction) Commit() error {
+	r.r.Data = r.Data
+	return nil
+}
+func (r *mockedTransaction) Rollback() error {
+	return nil
+}
+
+func (r *mockedTransaction) Get(document api.ObjectRef) (api.Document, error) {
 
 	c := document.Collection().String()
 	col, found := r.Data[c]
@@ -92,7 +131,7 @@ func (a SortDocuments) Swap(i, j int) {
 	a.docs[i], a.docs[j] = a.docs[j], a.docs[i]
 }
 
-func (r *mockedDataRepository) GetAll(c api.ObjectRef, orderBy []string, limit int) ([]api.Document, error) {
+func (r *mockedTransaction) GetAll(c api.ObjectRef, orderBy []string) (api.Cursor, error) {
 
 	col, found := r.Data[c.String()]
 
@@ -112,14 +151,10 @@ func (r *mockedDataRepository) GetAll(c api.ObjectRef, orderBy []string, limit i
 
 	sort.Sort(SortDocuments{res, orderByItem})
 
-	if len(res) > limit {
-		res = res[:limit]
-	}
-
-	return res, nil
+	return &mockedCursor{res, 0}, nil
 }
 
-func (r *mockedDataRepository) Add(c api.ObjectRef, payload api.DocumentProperties) (api.Document, error) {
+func (r *mockedTransaction) Add(c api.ObjectRef, payload api.DocumentProperties) (api.Document, error) {
 
 	col, found := r.Data[c.String()]
 
@@ -142,7 +177,7 @@ func (r *mockedDataRepository) Add(c api.ObjectRef, payload api.DocumentProperti
 	return col[id], nil
 }
 
-func (r *mockedDataRepository) Put(document api.ObjectRef, payload api.DocumentProperties) error {
+func (r *mockedTransaction) Put(document api.ObjectRef, payload api.DocumentProperties) error {
 
 	c := document.Collection().String()
 	col, found := r.Data[c]
@@ -163,7 +198,7 @@ func (r *mockedDataRepository) Put(document api.ObjectRef, payload api.DocumentP
 
 	return nil
 }
-func (r *mockedDataRepository) Patch(document api.ObjectRef, payload api.DocumentProperties) error {
+func (r *mockedTransaction) Patch(document api.ObjectRef, payload api.DocumentProperties) error {
 
 	c := document.Collection().String()
 	col, found := r.Data[c]
@@ -186,7 +221,7 @@ func (r *mockedDataRepository) Patch(document api.ObjectRef, payload api.Documen
 
 	return nil
 }
-func (r *mockedDataRepository) Delete(document api.ObjectRef) error {
+func (r *mockedTransaction) Delete(document api.ObjectRef) error {
 
 	c := document.Collection().String()
 	col, found := r.Data[c]
@@ -199,7 +234,7 @@ func (r *mockedDataRepository) Delete(document api.ObjectRef) error {
 
 	return nil
 }
-func (r *mockedDataRepository) DeleteCollection(collection api.ObjectRef) error {
+func (r *mockedTransaction) DeleteCollection(collection api.ObjectRef) error {
 
 	delete(r.Data, collection.String())
 

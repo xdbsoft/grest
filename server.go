@@ -6,10 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -44,19 +44,13 @@ func Server(cfg Config) (http.Handler, error) {
 	s := server{
 		Authenticator:  a,
 		DataRepository: r,
-		RuleChecker:    rules.Checker{},
-		Collections:    make(map[string]CollectionDefinition),
-	}
-
-	for _, c := range cfg.Collections {
-		s.Collections[c.Name] = c
+		RuleChecker:    rules.NewChecker(cfg.Rules),
 	}
 
 	return &s, nil
 }
 
 type server struct {
-	Collections    map[string]CollectionDefinition
 	Authenticator  api.Authenticator
 	DataRepository api.Repository
 	RuleChecker    rules.Checker
@@ -85,7 +79,6 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		handleError(w, r, err)
 		return
 	}
-	log.Println(r.Method, target, "by", user)
 
 	var data interface{}
 
@@ -247,8 +240,6 @@ func (s *server) handleResponse(w http.ResponseWriter, r *http.Request, data int
 
 func handleError(w http.ResponseWriter, r *http.Request, err error) {
 
-	log.Println(err)
-
 	cause := errors.Cause(err)
 
 	if IsBadRequest(cause) {
@@ -269,66 +260,116 @@ func handleError(w http.ResponseWriter, r *http.Request, err error) {
 	http.Error(w, "Internal server error", http.StatusInternalServerError)
 }
 
-func (s *server) checkIsAuthorized(target api.ObjectRef, user api.User, method rules.Method, rules []rules.Rule) error {
+func (s *server) GetRuleAndCheckPath(target api.ObjectRef, user api.User, isWrite bool) (rules.RuleCheck, error) {
+	r := s.RuleChecker.SelectMatchingRule(target)
 
-	ok, err := s.RuleChecker.Check(rules, target, user, method)
+	if !r.IsValid() {
+		return rules.RuleCheck{}, notAuthorizedError{target}
+	}
+
+	ok, err := r.CheckPath(user, false, s.GetDocumentFunc(user))
 	if err != nil {
-		return err
+		return rules.RuleCheck{}, err
 	}
-
 	if !ok {
-		return notAuthorizedError{target}
+		return rules.RuleCheck{}, notAuthorizedError{target}
 	}
 
-	return nil
+	return r, nil
 }
 
-func (s *server) checkIsAuthorizedForCollection(target api.ObjectRef, user api.User, method rules.Method) error {
-
-	collectionDef, ok := s.Collections[target[0]]
-	if !ok {
-		return notFoundError{target}
+func (s *server) GetDocumentFunc(user api.User) func(api.ObjectRef) (api.Document, error) {
+	return func(target api.ObjectRef) (api.Document, error) {
+		return s.GetDocument(target, user)
 	}
-
-	documentRef := append(target, "*")
-
-	return s.checkIsAuthorized(documentRef, user, method, collectionDef.Rules)
-
 }
 
-func (s *server) checkIsAuthorizedForDoc(target api.ObjectRef, user api.User, method rules.Method) error {
+func (s *server) GetDocument(target api.ObjectRef, user api.User) (api.Document, error) {
 
-	collectionDef, ok := s.Collections[target[0]]
+	r, err := s.GetRuleAndCheckPath(target, user, false)
+	if err != nil {
+		return api.Document{}, err
+	}
+
+	tx, err := s.DataRepository.Begin()
+	if err != nil {
+		return api.Document{}, err
+	}
+	defer func() {
+		if err == nil {
+			tx.Commit()
+		} else {
+			tx.Rollback()
+		}
+	}()
+
+	data, err := tx.Get(target)
+	if err != nil {
+		return api.Document{}, err
+	}
+
+	ok, err := r.CheckContent(user, false, data, api.Document{}, s.GetDocumentFunc(user))
+	if err != nil {
+		return api.Document{}, err
+	}
 	if !ok {
-		return notFoundError{target}
+		return api.Document{}, notAuthorizedError{target}
 	}
 
-	return s.checkIsAuthorized(target, user, method, collectionDef.Rules)
-}
-
-func (s *server) GetDocument(target api.ObjectRef, user api.User) (interface{}, error) {
-
-	if err := s.checkIsAuthorizedForDoc(target, user, rules.READ); err != nil {
-		return nil, err
-	}
-
-	return s.DataRepository.Get(target)
+	return data, nil
 }
 
 func (s *server) GetCollection(target api.ObjectRef, limit int, orderBy []string, user api.User) (interface{}, error) {
 
-	if err := s.checkIsAuthorizedForCollection(target, user, rules.READ); err != nil {
-		return nil, err
-	}
-
-	features, err := s.DataRepository.GetAll(target, orderBy, limit)
+	r, err := s.GetRuleAndCheckPath(target, user, false)
 	if err != nil {
 		return nil, err
 	}
 
+	tx, err := s.DataRepository.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err == nil {
+			tx.Commit()
+		} else {
+			tx.Rollback()
+		}
+	}()
+
+	cu, err := tx.GetAll(target, orderBy)
+	if err != nil {
+		return nil, err
+	}
+	defer cu.Close()
+
 	c := api.Collection{
-		ID:       target.ID(),
-		Features: features,
+		ID: target.ID(),
+	}
+	for len(c.Features) < limit {
+
+		fetched, err := cu.Fetch(10)
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range fetched {
+
+			ok, err := r.CheckContent(user, false, f, api.Document{}, s.GetDocumentFunc(user))
+			if err != nil {
+				return nil, err
+			}
+
+			if ok {
+				c.Features = append(c.Features, f)
+				if len(c.Features) == limit {
+					break
+				}
+			}
+		}
+		if len(fetched) == 0 {
+			break
+		}
 	}
 
 	return c, nil
@@ -336,49 +377,273 @@ func (s *server) GetCollection(target api.ObjectRef, limit int, orderBy []string
 
 func (s *server) AddDocument(target api.ObjectRef, payload api.DocumentProperties, user api.User) (interface{}, error) {
 
-	if err := s.checkIsAuthorizedForCollection(target, user, rules.WRITE); err != nil {
+	r, err := s.GetRuleAndCheckPath(target, user, true)
+	if err != nil {
 		return nil, err
 	}
 
-	return s.DataRepository.Add(target, payload)
+	tx, err := s.DataRepository.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err == nil {
+			tx.Commit()
+		} else {
+			tx.Rollback()
+		}
+	}()
+
+	t := time.Now()
+	newDoc := api.Document{
+		ID:                   "*",
+		CreationDate:         t,
+		LastModificationDate: t,
+		Properties:           payload,
+	}
+
+	ok, err := r.CheckContent(user, true, api.Document{}, newDoc, s.GetDocumentFunc(user))
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, notAuthorizedError{target}
+	}
+
+	doc, err := tx.Add(target, payload)
+	if err != nil {
+		return nil, err
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return nil, err
+	}
+
+	return doc, nil
 }
 
 func (s *server) PutDocument(target api.ObjectRef, payload api.Document, user api.User) error {
-
-	if err := s.checkIsAuthorizedForDoc(target, user, rules.WRITE); err != nil {
-		return err
-	}
 
 	if payload.ID != target.ID() {
 		return badRequest("Invalid ID")
 	}
 
-	return s.DataRepository.Put(target, payload.Properties)
+	r, err := s.GetRuleAndCheckPath(target, user, true)
+	if err != nil {
+		return err
+	}
+
+	tx, err := s.DataRepository.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err == nil {
+			tx.Commit()
+		} else {
+			tx.Rollback()
+		}
+	}()
+
+	t := time.Now()
+	newDoc := api.Document{
+		ID:                   target.ID(),
+		CreationDate:         t,
+		LastModificationDate: t,
+		Properties:           payload.Properties,
+	}
+
+	data, err := tx.Get(target)
+	if IsNotFound(err) {
+		newDoc.CreationDate = data.CreationDate
+	} else if err != nil {
+		return err
+	}
+
+	ok, err := r.CheckContent(user, true, data, newDoc, s.GetDocumentFunc(user))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return notAuthorizedError{target}
+	}
+
+	err = tx.Put(target, newDoc.Properties)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func patchPayload(data, patch map[string]interface{}) map[string]interface{} {
+
+	res := make(map[string]interface{})
+
+	for k := range data {
+
+		if patched, found := patch[k]; found {
+
+			dataChild, dataOk := data[k].(map[string]interface{})
+			patchChild, patchOk := patched.(map[string]interface{})
+			if dataOk && patchOk {
+				res[k] = patchPayload(dataChild, patchChild)
+			} else {
+				res[k] = patched
+			}
+
+		} else {
+			res[k] = data[k]
+		}
+
+	}
+
+	for k := range patch {
+		if _, found := data[k]; found {
+			continue
+		}
+
+		res[k] = patch[k]
+	}
+
+	return res
 }
 
 func (s *server) PatchDocument(target api.ObjectRef, payload api.DocumentProperties, user api.User) error {
 
-	if err := s.checkIsAuthorizedForDoc(target, user, rules.WRITE); err != nil {
+	r, err := s.GetRuleAndCheckPath(target, user, true)
+	if err != nil {
 		return err
 	}
 
-	return s.DataRepository.Patch(target, payload)
+	tx, err := s.DataRepository.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err == nil {
+			tx.Commit()
+		} else {
+			tx.Rollback()
+		}
+	}()
+
+	data, err := tx.Get(target)
+	if err != nil {
+		return err
+	}
+
+	newDoc := api.Document{
+		ID:                   target.ID(),
+		CreationDate:         data.CreationDate,
+		LastModificationDate: time.Now(),
+		Properties:           patchPayload(data.Properties, payload),
+	}
+
+	ok, err := r.CheckContent(user, true, data, newDoc, s.GetDocumentFunc(user))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return notAuthorizedError{target}
+	}
+
+	err = tx.Patch(target, newDoc.Properties)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (s *server) DeleteDocument(target api.ObjectRef, user api.User) error {
 
-	if err := s.checkIsAuthorizedForDoc(target, user, rules.DELETE); err != nil {
+	r, err := s.GetRuleAndCheckPath(target, user, true)
+	if err != nil {
 		return err
 	}
 
-	return s.DataRepository.Delete(target)
+	tx, err := s.DataRepository.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err == nil {
+			tx.Commit()
+		} else {
+			tx.Rollback()
+		}
+	}()
+
+	data, err := tx.Get(target)
+	if err != nil {
+		return err
+	}
+
+	ok, err := r.CheckContent(user, true, data, api.Document{}, s.GetDocumentFunc(user))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return notAuthorizedError{target}
+	}
+
+	err = tx.Delete(target)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (s *server) DeleteCollection(target api.ObjectRef, user api.User) error {
 
-	if err := s.checkIsAuthorizedForCollection(target, user, rules.DELETE); err != nil {
+	r, err := s.GetRuleAndCheckPath(target, user, true)
+	if err != nil {
 		return err
 	}
 
-	return s.DataRepository.DeleteCollection(target)
+	tx, err := s.DataRepository.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err == nil {
+			tx.Commit()
+		} else {
+			tx.Rollback()
+		}
+	}()
+
+	cu, err := tx.GetAll(target, nil)
+	if err != nil {
+		return err
+	}
+	defer cu.Close()
+
+	data, err := cu.Fetch(10)
+	if err != nil {
+		return err
+	}
+	for len(data) > 0 {
+
+		for _, d := range data {
+			ok, err := r.CheckContent(user, true, d, api.Document{}, s.GetDocumentFunc(user))
+			if err != nil {
+				return err
+			}
+			if ok {
+				documentRef := append(target, d.ID)
+				tx.Delete(documentRef)
+			}
+		}
+
+		data, err = cu.Fetch(10)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }

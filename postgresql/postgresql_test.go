@@ -46,11 +46,16 @@ func TestPutPatchGetDeleteDocument(t *testing.T) {
 		t.Error(err)
 	}
 
-	if err := r.Put(d, payload); err != nil {
+	tx, err := r.Begin()
+	if err != nil {
 		t.Error(err)
 	}
 
-	res, err := r.Get(d)
+	if err := tx.Put(d, payload); err != nil {
+		t.Error(err)
+	}
+
+	res, err := tx.Get(d)
 	if err != nil {
 		t.Error(err)
 	}
@@ -79,14 +84,24 @@ func TestPutPatchGetDeleteDocument(t *testing.T) {
 		t.Errorf("Invalid field 'n': got %v, expected 123", v2)
 	}
 
-	payload = make(api.DocumentProperties)
-	payload["k2"] = "v2"
-	payload["n"] = 125
-	if err := r.Patch(d, payload); err != nil {
+	err = tx.Commit()
+	if err != nil {
 		t.Error(err)
 	}
 
-	res, err = r.Get(d)
+	tx, err = r.Begin()
+	if err != nil {
+		t.Error(err)
+	}
+
+	payload = make(api.DocumentProperties)
+	payload["k2"] = "v2"
+	payload["n"] = 125
+	if err := tx.Patch(d, payload); err != nil {
+		t.Error(err)
+	}
+
+	res, err = tx.Get(d)
 	if err != nil {
 		t.Error(err)
 	}
@@ -121,13 +136,18 @@ func TestPutPatchGetDeleteDocument(t *testing.T) {
 		t.Errorf("Invalid field 'n': got %v, expected 125", v2)
 	}
 
-	if err := r.Delete(d); err != nil {
+	if err := tx.Delete(d); err != nil {
 		t.Error(err)
 	}
 
-	res, err = r.Get(d)
+	res, err = tx.Get(d)
 	if err == nil {
 		t.Error("Document should not be found")
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		t.Error(err)
 	}
 }
 
@@ -145,8 +165,13 @@ func TestAddGetDeleteCollection(t *testing.T) {
 		t.Error(err)
 	}
 
+	tx, err := r.Begin()
+	if err != nil {
+		t.Error(err)
+	}
+
 	c := api.ObjectRef{"test"}
-	d, err := r.Add(c, payload)
+	d, err := tx.Add(c, payload)
 	if err != nil {
 		t.Error(err)
 	}
@@ -156,7 +181,7 @@ func TestAddGetDeleteCollection(t *testing.T) {
 
 	dref := api.ObjectRef{"test", d.ID}
 
-	res, err := r.Get(dref)
+	res, err := tx.Get(dref)
 	if err != nil {
 		t.Error(err)
 	}
@@ -181,7 +206,7 @@ func TestAddGetDeleteCollection(t *testing.T) {
 		t.Errorf("Invalid field 'n': got %v, expected 123", v2)
 	}
 
-	d2, err := r.Add(c, payload)
+	d2, err := tx.Add(c, payload)
 	if err != nil {
 		t.Error(err)
 	}
@@ -189,25 +214,52 @@ func TestAddGetDeleteCollection(t *testing.T) {
 		t.Error("Document 2 ID should be returned")
 	}
 
-	all, err := r.GetAll(c, nil, 2)
+	cu, err := tx.GetAll(c, nil)
 	if err != nil {
 		t.Error(err)
 	}
+
+	all, err := cu.Fetch(2)
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = cu.Close()
+	if err != nil {
+		t.Error(err)
+	}
+
 	if len(all) != 2 {
 		t.Errorf("Invalid list length, got %v, expected 2", len(all))
 	}
 
-	err = r.DeleteCollection(c)
+	err = tx.DeleteCollection(c)
 	if err != nil {
 		t.Error(err)
 	}
 
-	all, err = r.GetAll(c, nil, 2)
+	cu2, err := tx.GetAll(c, nil)
 	if err != nil {
 		t.Error(err)
 	}
+
+	all, err = cu2.Fetch(2)
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = cu2.Close()
+	if err != nil {
+		t.Error(err)
+	}
+
 	if len(all) != 0 {
 		t.Errorf("Invalid list length, got %v, expected 0", len(all))
+	}
+
+	err = tx.Rollback()
+	if err != nil {
+		t.Error(err)
 	}
 
 }

@@ -3,6 +3,7 @@ module github.com/xdbsoft/grest
 require (
 	github.com/coreos/go-oidc v2.0.0+incompatible
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/gorilla/handlers v1.4.2
 	github.com/jinzhu/configor v1.1.1
 	github.com/lib/pq v1.1.1
 	github.com/pkg/errors v0.8.1

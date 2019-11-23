@@ -3,6 +3,7 @@ package postgresql
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/pkg/errors"
@@ -28,6 +29,15 @@ type repository struct {
 	db *sql.DB
 }
 
+type transaction struct {
+	tx *sql.Tx
+}
+
+type cursor struct {
+	name string
+	tx   *sql.Tx
+}
+
 type notFound string
 
 func (err notFound) IsNotFound() bool {
@@ -43,6 +53,7 @@ func (r *repository) Init() error {
 	if err != nil {
 		return errors.Wrap(err, "Select query for t_document failed")
 	}
+	defer rows.Close()
 	tablesFound := false
 	for rows.Next() {
 		var found string
@@ -64,12 +75,30 @@ func (r *repository) Init() error {
 	return nil
 }
 
-func (r *repository) Get(d api.ObjectRef) (api.Document, error) {
+func (r *repository) Begin() (api.Transaction, error) {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return nil, err
+	}
 
-	rows, err := r.db.Query("SELECT content, created, updated FROM t_document WHERE collection=$1 AND id=$2", d.Collection().String(), d.ID())
+	return &transaction{tx: tx}, nil
+}
+
+func (tx *transaction) Commit() error {
+	return tx.tx.Commit()
+}
+
+func (tx *transaction) Rollback() error {
+	return tx.tx.Rollback()
+}
+
+func (tx *transaction) Get(d api.ObjectRef) (api.Document, error) {
+
+	rows, err := tx.tx.Query("SELECT content, created, updated FROM t_document WHERE collection=$1 AND id=$2", d.Collection().String(), d.ID())
 	if err != nil {
 		return api.Document{}, errors.Wrap(err, "Select query failed")
 	}
+	defer rows.Close()
 
 	if !rows.Next() {
 		return api.Document{}, notFound("document not found")
@@ -94,9 +123,32 @@ func (r *repository) Get(d api.ObjectRef) (api.Document, error) {
 	}, nil
 }
 
-func (r *repository) GetAll(c api.ObjectRef, orderBy []string, limit int) ([]api.Document, error) {
+func (tx *transaction) GetAll(c api.ObjectRef, orderBy []string) (api.Cursor, error) {
 
-	rows, err := r.db.Query("SELECT id, created, updated, content FROM t_document WHERE collection=$1 ORDER BY id LIMIT $2", c.String(), limit)
+	cursorName := api.NextID()
+
+	_, err := tx.tx.Exec("DECLARE "+cursorName+" CURSOR FOR SELECT id, created, updated, content FROM t_document WHERE collection=$1 ORDER BY id", c.String())
+	if err != nil {
+		return nil, errors.Wrap(err, "DB query failed")
+	}
+
+	return &cursor{
+		name: cursorName,
+		tx:   tx.tx,
+	}, nil
+}
+
+func (c *cursor) Close() error {
+	_, err := c.tx.Exec("CLOSE " + c.name)
+	if err != nil {
+		return errors.Wrap(err, "DB query failed")
+	}
+	return nil
+}
+
+func (c *cursor) Fetch(count int) ([]api.Document, error) {
+
+	rows, err := c.tx.Query(fmt.Sprintf("FETCH FORWARD %d FROM %s", count, c.name))
 	if err != nil {
 		return nil, errors.Wrap(err, "DB query failed")
 	}
@@ -126,7 +178,7 @@ func (r *repository) GetAll(c api.ObjectRef, orderBy []string, limit int) ([]api
 	return result, nil
 }
 
-func (r *repository) Add(c api.ObjectRef, payload api.DocumentProperties) (api.Document, error) {
+func (tx *transaction) Add(c api.ObjectRef, payload api.DocumentProperties) (api.Document, error) {
 
 	id := api.NextID()
 
@@ -136,57 +188,62 @@ func (r *repository) Add(c api.ObjectRef, payload api.DocumentProperties) (api.D
 		return api.Document{}, errors.Wrap(err, "unable to encode payload")
 	}
 
-	if _, err := r.db.Exec("INSERT INTO t_document (collection, id, content) VALUES ($1,$2,$3)", c.String(), id, &b); err != nil {
+	row := tx.tx.QueryRow("INSERT INTO t_document (collection, id, content) VALUES ($1,$2,$3) RETURNING CURRENT_TIMESTAMP", c.String(), id, &b)
+
+	var t time.Time
+	if err := row.Scan(&t); err != nil {
 		return api.Document{}, errors.Wrap(err, "unable to insert document")
 	}
 
 	d := api.Document{
-		ID:         id,
-		Properties: payload,
+		ID:                   id,
+		CreationDate:         t,
+		LastModificationDate: t,
+		Properties:           payload,
 	}
 
 	return d, nil
 }
 
-func (r *repository) Put(d api.ObjectRef, payload api.DocumentProperties) error {
+func (tx *transaction) Put(d api.ObjectRef, payload api.DocumentProperties) error {
 
 	b, err := json.Marshal(&payload)
 	if err != nil {
 		return errors.Wrap(err, "unable to encode payload")
 	}
 
-	if _, err := r.db.Exec("INSERT INTO t_document (collection, id, content) VALUES ($1,$2,$3) ON CONFLICT(collection,id) DO UPDATE SET content=$3,updated=CURRENT_TIMESTAMP", d.Collection().String(), d.ID(), &b); err != nil {
+	if _, err := tx.tx.Exec("INSERT INTO t_document (collection, id, content) VALUES ($1,$2,$3) ON CONFLICT(collection,id) DO UPDATE SET content=$3,updated=CURRENT_TIMESTAMP", d.Collection().String(), d.ID(), &b); err != nil {
 		return errors.Wrap(err, "unable to insert or update document")
 	}
 
 	return nil
 }
-func (r *repository) Patch(d api.ObjectRef, payload api.DocumentProperties) error {
+func (tx *transaction) Patch(d api.ObjectRef, payload api.DocumentProperties) error {
 
 	b, err := json.Marshal(&payload)
 	if err != nil {
 		return errors.Wrap(err, "unable to encode payload")
 	}
 
-	if _, err := r.db.Exec("UPDATE t_document SET content = (content || $1),updated=CURRENT_TIMESTAMP WHERE collection=$2 AND id=$3", &b, d.Collection().String(), d.ID()); err != nil {
+	if _, err := tx.tx.Exec("UPDATE t_document SET content = (content || $1),updated=CURRENT_TIMESTAMP WHERE collection=$2 AND id=$3", &b, d.Collection().String(), d.ID()); err != nil {
 		return errors.Wrap(err, "unable to update document")
 	}
 
 	return nil
 }
 
-func (r *repository) Delete(d api.ObjectRef) error {
+func (tx *transaction) Delete(d api.ObjectRef) error {
 
-	if _, err := r.db.Exec("DELETE FROM t_document where collection=$1 and id=$2", d.Collection().String(), d.ID()); err != nil {
+	if _, err := tx.tx.Exec("DELETE FROM t_document where collection=$1 and id=$2", d.Collection().String(), d.ID()); err != nil {
 		return errors.Wrap(err, "unable to delete document")
 	}
 
 	return nil
 }
 
-func (r *repository) DeleteCollection(c api.ObjectRef) error {
+func (tx *transaction) DeleteCollection(c api.ObjectRef) error {
 
-	if _, err := r.db.Exec("DELETE FROM t_document where collection=$1", c.String()); err != nil {
+	if _, err := tx.tx.Exec("DELETE FROM t_document where collection=$1", c.String()); err != nil {
 		return errors.Wrap(err, "unable to delete collection")
 	}
 

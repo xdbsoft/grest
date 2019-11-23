@@ -25,27 +25,21 @@ type testRequest struct {
 }
 
 type testCase struct {
-	collections []CollectionDefinition
-	data        map[string]map[string]api.Document
-	requests    []testRequest
+	rules    []rules.Rule
+	data     map[string]map[string]api.Document
+	requests []testRequest
 }
 
 func (c testCase) Run(t *testing.T) {
 
 	t.Helper()
 
-	colDefs := make(map[string]CollectionDefinition)
-	for _, cd := range c.collections {
-		colDefs[cd.Name] = cd
-	}
-
 	mock := &mockedDataRepository{Data: c.data, Now: time.Date(2018, 8, 24, 5, 0, 0, 0, time.UTC)}
 
 	s := server{
-		Collections:    colDefs,
 		Authenticator:  mockedAuthenticator{},
 		DataRepository: mock,
-		RuleChecker:    rules.Checker{},
+		RuleChecker:    rules.NewChecker(c.rules),
 	}
 
 	for j, request := range c.requests {
@@ -101,11 +95,6 @@ func allowAll(path string) []rules.Rule {
 	return []rules.Rule{
 		{
 			Path: path,
-			Allow: []rules.Allow{
-				{
-					Methods: []rules.Method{rules.READ, rules.WRITE, rules.DELETE},
-				},
-			},
 		},
 	}
 }
@@ -113,12 +102,7 @@ func allowAll(path string) []rules.Rule {
 func TestServeHTTP_Get_Document(t *testing.T) {
 
 	c := testCase{
-		collections: []CollectionDefinition{
-			{
-				Name:  "test",
-				Rules: allowAll("test/{docId}"),
-			},
-		},
+		rules: allowAll("test/{docId}"),
 		data: map[string]map[string]api.Document{
 			"test": {"doc1": api.Document{
 				ID:                   "doc1",
@@ -146,12 +130,7 @@ func TestServeHTTP_Get_Document(t *testing.T) {
 func TestServeHTTP_Get_Document_NotModified(t *testing.T) {
 
 	c := testCase{
-		collections: []CollectionDefinition{
-			{
-				Name:  "test",
-				Rules: allowAll("test/{docId}"),
-			},
-		},
+		rules: allowAll("test/{docId}"),
 		data: map[string]map[string]api.Document{
 			"test": {"doc1": api.Document{
 				ID:                   "doc1",
@@ -184,12 +163,7 @@ func TestServeHTTP_Get_Document_NotModified(t *testing.T) {
 func TestServeHTTP_BadRequests(t *testing.T) {
 
 	c := testCase{
-		collections: []CollectionDefinition{
-			{
-				Name:  "test",
-				Rules: allowAll("test/{docId}"),
-			},
-		},
+		rules: allowAll("test/{docId}"),
 		requests: []testRequest{
 			{
 				method:              "GET",
@@ -268,12 +242,7 @@ func TestServeHTTP_BadRequests(t *testing.T) {
 func TestServeHTTP_Get_Collection(t *testing.T) {
 
 	c := testCase{
-		collections: []CollectionDefinition{
-			{
-				Name:  "test",
-				Rules: allowAll("test/{docId}"),
-			},
-		},
+		rules: allowAll("test/{docId}"),
 		data: map[string]map[string]api.Document{
 			"test": {
 				"doc1": api.Document{
@@ -323,12 +292,7 @@ func TestServeHTTP_Get_Collection(t *testing.T) {
 func TestServeHTTP_Get_Print(t *testing.T) {
 
 	c := testCase{
-		collections: []CollectionDefinition{
-			{
-				Name:  "test",
-				Rules: allowAll("test/{docId}"),
-			},
-		},
+		rules: allowAll("test/{docId}"),
 		data: map[string]map[string]api.Document{
 			"test": {"doc1": api.Document{
 				ID:                   "doc1",
@@ -362,12 +326,7 @@ func TestServeHTTP_Get_Print(t *testing.T) {
 func TestServeHTTP_Get_NotFound(t *testing.T) {
 
 	c := testCase{
-		collections: []CollectionDefinition{
-			{
-				Name:  "test",
-				Rules: allowAll("test/{docId}"),
-			},
-		},
+		rules: allowAll("test/{docId}"),
 		data: map[string]map[string]api.Document{
 			"test": {"doc0": api.Document{
 				ID:         "doc0",
@@ -387,22 +346,6 @@ func TestServeHTTP_Get_NotFound(t *testing.T) {
 				expectedBody: `Data not found
 `,
 			},
-			{
-				method:              "GET",
-				url:                 "http://example.com/test2",
-				expectedCode:        404,
-				expectedContentType: "text/plain; charset=utf-8",
-				expectedBody: `Data not found
-`,
-			},
-			{
-				method:              "GET",
-				url:                 "http://example.com/test2/doc1",
-				expectedCode:        404,
-				expectedContentType: "text/plain; charset=utf-8",
-				expectedBody: `Data not found
-`,
-			},
 		},
 	}
 
@@ -412,6 +355,7 @@ func TestServeHTTP_Get_NotFound(t *testing.T) {
 func TestServeHTTP_Get_InvalidAuth(t *testing.T) {
 
 	c := testCase{
+		rules: allowAll("test/{docId}"),
 		requests: []testRequest{
 			{
 				method:              "GET",
@@ -446,13 +390,8 @@ func TestServeHTTP_Get_InvalidAuth(t *testing.T) {
 func TestServeHTTP_PutGet(t *testing.T) {
 
 	c := testCase{
-		collections: []CollectionDefinition{
-			{
-				Name:  "test",
-				Rules: allowAll("test/{docId}"),
-			},
-		},
-		data: map[string]map[string]api.Document{},
+		rules: allowAll("test/{docId}"),
+		data:  map[string]map[string]api.Document{},
 		requests: []testRequest{
 			{
 				method:              "PUT",
@@ -479,13 +418,8 @@ func TestServeHTTP_PutGet(t *testing.T) {
 func TestServeHTTP_PostGet_Collection(t *testing.T) {
 
 	c := testCase{
-		collections: []CollectionDefinition{
-			{
-				Name:  "test",
-				Rules: allowAll("test/{docId}"),
-			},
-		},
-		data: map[string]map[string]api.Document{},
+		rules: allowAll("test/{docId}"),
+		data:  map[string]map[string]api.Document{},
 		requests: []testRequest{
 			{
 				method:              "POST",
@@ -513,18 +447,13 @@ func TestServeHTTP_PostGet_Collection(t *testing.T) {
 func TestServeHTTP_PutPostGet(t *testing.T) {
 
 	c := testCase{
-		collections: []CollectionDefinition{
-			{
-				Name:  "test",
-				Rules: allowAll("test/{docId}"),
-			},
-		},
-		data: map[string]map[string]api.Document{},
+		rules: allowAll("test/{docId}"),
+		data:  map[string]map[string]api.Document{},
 		requests: []testRequest{
 			{
 				method:              "PUT",
 				url:                 "http://example.com/test/doc1",
-				body:                `{"id":"doc1","properties":{"k":"v"}}`,
+				body:                `{"id":"doc1","properties":{"k":"v","u":"x"}}`,
 				expectedCode:        204,
 				expectedContentType: "",
 				expectedBody:        "",
@@ -542,7 +471,7 @@ func TestServeHTTP_PutPostGet(t *testing.T) {
 				url:                 "http://example.com/test/doc1",
 				expectedCode:        200,
 				expectedContentType: "application/json",
-				expectedBody: `{"id":"doc1","creationDate":"2018-08-24T05:00:00Z","lastModificationDate":"2018-08-24T06:00:00Z","properties":{"k":"v2","x":123}}
+				expectedBody: `{"id":"doc1","creationDate":"2018-08-24T05:00:00Z","lastModificationDate":"2018-08-24T06:00:00Z","properties":{"k":"v2","u":"x","x":123}}
 `,
 			},
 		},
@@ -563,19 +492,11 @@ func TestServeHTTP_Get_IncorrectRule(t *testing.T) {
 				Properties: map[string]interface{}{"k": "v"},
 			}},
 		},
-		collections: []CollectionDefinition{
+		rules: []rules.Rule{
 			{
-				Name: "test",
-				Rules: []rules.Rule{
-					{
-						Path: "test/{doc}",
-						Allow: []rules.Allow{
-							{
-								Methods: []rules.Method{"READ"},
-								If:      `path.doc > '100`,
-							},
-						},
-					},
+				Path: "test/{doc}",
+				Read: rules.Allow{
+					IfPath: `path.doc > '100`,
 				},
 			},
 		},
@@ -610,19 +531,11 @@ func TestServeHTTP_Get_RuleOnPath(t *testing.T) {
 				Properties:           map[string]interface{}{"k": "v"},
 			}},
 		},
-		collections: []CollectionDefinition{
+		rules: []rules.Rule{
 			{
-				Name: "test",
-				Rules: []rules.Rule{
-					{
-						Path: "test/{doc}",
-						Allow: []rules.Allow{
-							{
-								Methods: []rules.Method{"READ"},
-								If:      `path.doc > '100'`,
-							},
-						},
-					},
+				Path: "test/{doc}",
+				Read: rules.Allow{
+					IfPath: `path.doc > '100'`,
 				},
 			},
 		},
@@ -659,19 +572,11 @@ func TestServeHTTP_Get_RuleOnUser(t *testing.T) {
 				Properties:           map[string]interface{}{"k": "v"},
 			}},
 		},
-		collections: []CollectionDefinition{
+		rules: []rules.Rule{
 			{
-				Name: "test",
-				Rules: []rules.Rule{
-					{
-						Path: "test/{userId}",
-						Allow: []rules.Allow{
-							{
-								Methods: []rules.Method{"READ"},
-								If:      `path.userId == user.id`,
-							},
-						},
-					},
+				Path: "test/{userId}",
+				Read: rules.Allow{
+					IfPath: `path.userId == user.id`,
 				},
 			},
 		},
@@ -701,12 +606,7 @@ func TestServeHTTP_Get_RuleOnUser(t *testing.T) {
 func TestServeHTTP_Delete_Document(t *testing.T) {
 
 	c := testCase{
-		collections: []CollectionDefinition{
-			{
-				Name:  "test",
-				Rules: allowAll("test/{docId}"),
-			},
-		},
+		rules: allowAll("test/{docId}"),
 		data: map[string]map[string]api.Document{
 			"test": {"doc1": api.Document{
 				ID:         "doc1",
@@ -738,12 +638,7 @@ func TestServeHTTP_Delete_Document(t *testing.T) {
 func TestServeHTTP_Delete_Collection(t *testing.T) {
 
 	c := testCase{
-		collections: []CollectionDefinition{
-			{
-				Name:  "test",
-				Rules: allowAll("test/{docId}"),
-			},
-		},
+		rules: allowAll("test/{docId}"),
 		data: map[string]map[string]api.Document{
 			"test": {"doc1": api.Document{
 				ID:         "doc1",
@@ -775,19 +670,11 @@ func TestServeHTTP_Delete_Collection(t *testing.T) {
 func TestServeHTTP_NotAutorized(t *testing.T) {
 
 	c := testCase{
-		collections: []CollectionDefinition{
+		rules: []rules.Rule{
 			{
-				Name: "test",
-				Rules: []rules.Rule{
-					{
-						Path: "test/{docId}",
-						Allow: []rules.Allow{
-							{
-								Methods: []rules.Method{"READ", "WRITE", "DELETE"},
-								If:      `"doc1" != "doc1"`,
-							},
-						},
-					},
+				Path: "test/{docId}",
+				Read: rules.Allow{
+					IfPath: `"doc1" != "doc1"`,
 				},
 			},
 		},

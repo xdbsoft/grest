@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -8,7 +9,15 @@ import (
 	"github.com/xdbsoft/gript"
 )
 
-type Checker struct{}
+type Checker struct {
+	rules []Rule
+}
+
+type RetrievalFunc func(api.ObjectRef) (api.Document, error)
+
+func NewChecker(rules []Rule) Checker {
+	return Checker{rules: rules}
+}
 
 func isVariable(s string) (bool, string) {
 
@@ -20,7 +29,10 @@ func isVariable(s string) (bool, string) {
 	return false, ""
 }
 
-func (c Checker) checkCondition(condition string, variables map[string]interface{}) (bool, error) {
+func checkCondition(condition string, variables map[string]interface{}) (bool, error) {
+	if len(condition) == 0 {
+		return true, nil
+	}
 	r, err := gript.Eval(condition, variables)
 	if err != nil {
 		return false, err
@@ -32,51 +44,37 @@ func (c Checker) checkCondition(condition string, variables map[string]interface
 	return result, nil
 }
 
-func (c Checker) checkAllow(allow Allow, method Method, variables map[string]interface{}) (bool, error) {
-	methodFound := false
-	for _, am := range allow.Methods {
-		if am == method {
-			methodFound = true
-			break
-		}
-	}
-
-	if !methodFound {
-		return false, nil
-	}
-
-	if len(allow.If) > 0 {
-
-		ok, err := c.checkCondition(allow.If, variables)
-		if err != nil {
-			return false, err
-		}
-
-		if !ok {
-			return false, nil
-		}
-	}
-	return true, nil
+type RuleCheck struct {
+	rule          Rule
+	pathVariables map[string]interface{}
 }
 
-func (c Checker) Check(rules []Rule, target api.ObjectRef, user api.User, method Method) (bool, error) {
+func (r RuleCheck) IsValid() bool {
+	return len(r.rule.Path) > 0
+}
 
-	matchCount := 0
-	for _, rule := range rules {
+func (c Checker) SelectMatchingRule(target api.ObjectRef) RuleCheck {
+
+	docTarget := target
+	if !docTarget.IsDocument() {
+		docTarget = append(docTarget, "*")
+	}
+
+	for _, rule := range c.rules {
 
 		path := strings.Split(rule.Path, "/")
 
 		pathVariables := make(map[string]interface{})
 		match := false
-		if len(target) == len(path) {
+		if len(docTarget) == len(path) {
 
 			match = true
 			for i := range path {
 
 				if isVar, name := isVariable(path[i]); isVar {
-					pathVariables[name] = target[i]
+					pathVariables[name] = docTarget[i]
 				} else {
-					if path[i] != target[i] {
+					if path[i] != docTarget[i] {
 						match = false
 						break
 					}
@@ -85,31 +83,75 @@ func (c Checker) Check(rules []Rule, target api.ObjectRef, user api.User, method
 		}
 
 		if match {
-			matchCount++
-
-			variables := make(map[string]interface{})
-			variables["path"] = pathVariables
-			variables["user"] = map[string]interface{}{
-				"id":    user.ID,
-				"name":  user.Name,
-				"email": user.Email,
-			}
-
-			for _, a := range rule.Allow {
-
-				allowed, err := c.checkAllow(a, method, variables)
-				if err != nil {
-					return false, err
-				}
-				if allowed {
-					return true, nil
-				}
+			return RuleCheck{
+				rule:          rule,
+				pathVariables: pathVariables,
 			}
 		}
 	}
-	var err error
-	if matchCount == 0 {
-		err = errors.New("No matched rules")
+
+	return RuleCheck{}
+}
+
+func (r RuleCheck) RetrieveWith(a Allow, get RetrievalFunc) map[string]interface{} {
+
+	withContent := make(map[string]interface{})
+	for _, w := range a.With {
+
+		//Replace path variables
+		path := strings.Split(w.Path, "/")
+		for i := range path {
+			if ok, v := isVariable(path[i]); ok {
+				path[i] = fmt.Sprint(r.pathVariables[v])
+			}
+		}
+
+		//Get requested item
+		target := api.ObjectRef(path)
+		item, err := get(target)
+		if err == nil {
+			withContent[w.Name] = item
+		} else {
+			withContent[w.Name] = nil
+		}
 	}
-	return false, err
+	return withContent
+}
+
+func (r RuleCheck) CheckPath(user api.User, isWrite bool, get RetrievalFunc) (bool, error) {
+
+	a := r.rule.Read
+	if isWrite {
+		a = r.rule.Write
+	}
+
+	withContent := r.RetrieveWith(a, get)
+
+	variables := map[string]interface{}{
+		"path": r.pathVariables,
+		"user": user,
+		"with": withContent,
+	}
+
+	return checkCondition(a.IfPath, variables)
+}
+
+func (r RuleCheck) CheckContent(user api.User, isWrite bool, content api.Document, newContent api.Document, get RetrievalFunc) (bool, error) {
+
+	a := r.rule.Read
+	if isWrite {
+		a = r.rule.Write
+	}
+
+	withContent := r.RetrieveWith(a, get)
+
+	variables := map[string]interface{}{
+		"path":       r.pathVariables,
+		"user":       user,
+		"content":    content,
+		"newContent": newContent,
+		"with":       withContent,
+	}
+
+	return checkCondition(a.IfContent, variables)
 }
