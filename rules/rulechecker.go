@@ -152,6 +152,12 @@ func (r RuleCheck) CheckContent(user api.User, isWrite bool, content api.Documen
 		"newContent": newContent,
 		"with":       withContent,
 	}
+	if len(content.ID) == 0 {
+		variables["content"] = nil
+	}
+	if len(newContent.ID) == 0 {
+		variables["newContent"] = nil
+	}
 
 	return checkCondition(a.IfContent, variables)
 }

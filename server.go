@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -240,6 +241,7 @@ func (s *server) handleResponse(w http.ResponseWriter, r *http.Request, data int
 
 func handleError(w http.ResponseWriter, r *http.Request, err error) {
 
+	log.Println("Error: ", err)
 	cause := errors.Cause(err)
 
 	if IsBadRequest(cause) {
