@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -64,9 +65,9 @@ func (r *repository) Init() error {
 		if _, err := r.db.Exec(`CREATE TABLE t_document (
 			collection text NOT NULL,
 			id         character varying(126) NOT NULL,
-			content    jsonb,
 			created    timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated    timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			content    jsonb,
 			CONSTRAINT t_document_pkey PRIMARY KEY (collection, id)
 		)`); err != nil {
 			return errors.Wrap(err, "CREATE TABLE t_document failed")
@@ -127,7 +128,30 @@ func (tx *transaction) GetAll(c api.ObjectRef, orderBy []string) (api.Cursor, er
 
 	cursorName := api.NextID()
 
-	_, err := tx.tx.Exec("DECLARE "+cursorName+" CURSOR FOR SELECT id, created, updated, content FROM t_document WHERE collection=$1 ORDER BY id", c.String())
+	orderByString := "id"
+	if len(orderBy) > 0 {
+		mappedOrderBy := make([]string, len(orderBy))
+		for i := range orderBy {
+			items := strings.Split(orderBy[i], ".")
+			if len(items) == 1 {
+				switch items[0] {
+				case "id":
+					mappedOrderBy[i] = "id"
+				case "creationDate":
+					mappedOrderBy[i] = "created"
+				case "lastModificationDate":
+					mappedOrderBy[i] = "updated"
+				default:
+					return nil, errors.New("Unknown item in order by clause: " + orderBy[i])
+				}
+			} else {
+				return nil, errors.New("Unknown item in order by clause: " + orderBy[i])
+			}
+		}
+		orderByString = strings.Join(mappedOrderBy, ",")
+	}
+
+	_, err := tx.tx.Exec("DECLARE "+cursorName+" CURSOR FOR SELECT id, created, updated, content FROM t_document WHERE collection=$1 ORDER BY "+orderByString, c.String())
 	if err != nil {
 		return nil, errors.Wrap(err, "DB query failed")
 	}
@@ -183,7 +207,6 @@ func (tx *transaction) Add(c api.ObjectRef, payload api.DocumentProperties) (api
 	id := api.NextID()
 
 	b, err := json.Marshal(&payload)
-
 	if err != nil {
 		return api.Document{}, errors.Wrap(err, "unable to encode payload")
 	}

@@ -676,6 +676,9 @@ func TestServeHTTP_NotAutorized(t *testing.T) {
 				Read: rules.Allow{
 					IfPath: `"doc1" != "doc1"`,
 				},
+				Write: rules.Allow{
+					IfPath: `"doc1" != "doc1"`,
+				},
 			},
 		},
 		data: map[string]map[string]api.Document{

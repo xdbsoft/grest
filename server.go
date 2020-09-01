@@ -66,6 +66,12 @@ func getLimit(limitString string) int {
 	}
 	return limit
 }
+func getOrderBy(orderByString string) []string {
+	if len(orderByString) == 0 {
+		return nil
+	}
+	return strings.Split(orderByString, ",")
+}
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
@@ -113,7 +119,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case "GET":
 			limit := getLimit(r.FormValue("limit"))
-			orderBy := strings.Split(r.FormValue("orderBy"), "/")
+			orderBy := getOrderBy(r.FormValue("orderBy"))
 			data, err = s.GetCollection(target, limit, orderBy, user)
 		case "POST":
 			payload := make(api.DocumentProperties)
@@ -172,7 +178,6 @@ func (s *server) getTarget(r *http.Request) (api.ObjectRef, error) {
 			return api.ObjectRef{}, badRequest("empty item in path")
 		}
 	}
-
 	return api.ObjectRef(items), nil
 }
 
@@ -263,13 +268,13 @@ func handleError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func (s *server) GetRuleAndCheckPath(target api.ObjectRef, user api.User, isWrite bool) (rules.RuleCheck, error) {
-	r := s.RuleChecker.SelectMatchingRule(target)
+	r := s.RuleChecker.SelectMatchingRule(target, user)
 
 	if !r.IsValid() {
 		return rules.RuleCheck{}, notAuthorizedError{target}
 	}
 
-	ok, err := r.CheckPath(user, false, s.GetDocumentFunc(user))
+	ok, err := r.CheckPath(isWrite, s.GetDocument)
 	if err != nil {
 		return rules.RuleCheck{}, err
 	}
@@ -278,12 +283,6 @@ func (s *server) GetRuleAndCheckPath(target api.ObjectRef, user api.User, isWrit
 	}
 
 	return r, nil
-}
-
-func (s *server) GetDocumentFunc(user api.User) func(api.ObjectRef) (api.Document, error) {
-	return func(target api.ObjectRef) (api.Document, error) {
-		return s.GetDocument(target, user)
-	}
 }
 
 func (s *server) GetDocument(target api.ObjectRef, user api.User) (api.Document, error) {
@@ -310,7 +309,7 @@ func (s *server) GetDocument(target api.ObjectRef, user api.User) (api.Document,
 		return api.Document{}, err
 	}
 
-	ok, err := r.CheckContent(user, false, data, api.Document{}, s.GetDocumentFunc(user))
+	ok, err := r.PrepareCheckContent(false, s.GetDocument).Check(data, api.Document{})
 	if err != nil {
 		return api.Document{}, err
 	}
@@ -349,6 +348,9 @@ func (s *server) GetCollection(target api.ObjectRef, limit int, orderBy []string
 	c := api.Collection{
 		ID: target.ID(),
 	}
+
+	checker := r.PrepareCheckContent(false, s.GetDocument)
+
 	for len(c.Features) < limit {
 
 		fetched, err := cu.Fetch(10)
@@ -357,7 +359,7 @@ func (s *server) GetCollection(target api.ObjectRef, limit int, orderBy []string
 		}
 		for _, f := range fetched {
 
-			ok, err := r.CheckContent(user, false, f, api.Document{}, s.GetDocumentFunc(user))
+			ok, err := checker.Check(f, api.Document{})
 			if err != nil {
 				return nil, err
 			}
@@ -404,7 +406,7 @@ func (s *server) AddDocument(target api.ObjectRef, payload api.DocumentPropertie
 		Properties:           payload,
 	}
 
-	ok, err := r.CheckContent(user, true, api.Document{}, newDoc, s.GetDocumentFunc(user))
+	ok, err := r.PrepareCheckContent(true, s.GetDocument).Check(api.Document{}, newDoc)
 	if err != nil {
 		return nil, err
 	}
@@ -412,7 +414,7 @@ func (s *server) AddDocument(target api.ObjectRef, payload api.DocumentPropertie
 		return nil, notAuthorizedError{target}
 	}
 
-	doc, err := tx.Add(target, payload)
+	doc, err := tx.Add(target, newDoc.Properties)
 	if err != nil {
 		return nil, err
 	}
@@ -463,7 +465,7 @@ func (s *server) PutDocument(target api.ObjectRef, payload api.Document, user ap
 		return err
 	}
 
-	ok, err := r.CheckContent(user, true, data, newDoc, s.GetDocumentFunc(user))
+	ok, err := r.PrepareCheckContent(true, s.GetDocument).Check(data, newDoc)
 	if err != nil {
 		return err
 	}
@@ -543,7 +545,7 @@ func (s *server) PatchDocument(target api.ObjectRef, payload api.DocumentPropert
 		Properties:           patchPayload(data.Properties, payload),
 	}
 
-	ok, err := r.CheckContent(user, true, data, newDoc, s.GetDocumentFunc(user))
+	ok, err := r.PrepareCheckContent(true, s.GetDocument).Check(data, newDoc)
 	if err != nil {
 		return err
 	}
@@ -583,7 +585,7 @@ func (s *server) DeleteDocument(target api.ObjectRef, user api.User) error {
 		return err
 	}
 
-	ok, err := r.CheckContent(user, true, data, api.Document{}, s.GetDocumentFunc(user))
+	ok, err := r.PrepareCheckContent(true, s.GetDocument).Check(data, api.Document{})
 	if err != nil {
 		return err
 	}
@@ -628,10 +630,11 @@ func (s *server) DeleteCollection(target api.ObjectRef, user api.User) error {
 	if err != nil {
 		return err
 	}
+	checker := r.PrepareCheckContent(true, s.GetDocument)
 	for len(data) > 0 {
 
 		for _, d := range data {
-			ok, err := r.CheckContent(user, true, d, api.Document{}, s.GetDocumentFunc(user))
+			ok, err := checker.Check(d, api.Document{})
 			if err != nil {
 				return err
 			}

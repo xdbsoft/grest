@@ -13,7 +13,7 @@ type Checker struct {
 	rules []Rule
 }
 
-type RetrievalFunc func(api.ObjectRef) (api.Document, error)
+type RetrievalFunc func(api.ObjectRef, api.User) (api.Document, error)
 
 func NewChecker(rules []Rule) Checker {
 	return Checker{rules: rules}
@@ -47,13 +47,14 @@ func checkCondition(condition string, variables map[string]interface{}) (bool, e
 type RuleCheck struct {
 	rule          Rule
 	pathVariables map[string]interface{}
+	user          api.User
 }
 
 func (r RuleCheck) IsValid() bool {
 	return len(r.rule.Path) > 0
 }
 
-func (c Checker) SelectMatchingRule(target api.ObjectRef) RuleCheck {
+func (c Checker) SelectMatchingRule(target api.ObjectRef, user api.User) RuleCheck {
 
 	docTarget := target
 	if !docTarget.IsDocument() {
@@ -86,6 +87,7 @@ func (c Checker) SelectMatchingRule(target api.ObjectRef) RuleCheck {
 			return RuleCheck{
 				rule:          rule,
 				pathVariables: pathVariables,
+				user:          user,
 			}
 		}
 	}
@@ -98,17 +100,35 @@ func (r RuleCheck) RetrieveWith(a Allow, get RetrievalFunc) map[string]interface
 	withContent := make(map[string]interface{})
 	for _, w := range a.With {
 
-		//Replace path variables
+		//Replace variables
 		path := strings.Split(w.Path, "/")
 		for i := range path {
 			if ok, v := isVariable(path[i]); ok {
-				path[i] = fmt.Sprint(r.pathVariables[v])
+				splittedVar := strings.Split(v, ".")
+				if len(splittedVar) == 1 {
+					path[i] = fmt.Sprint(r.pathVariables[splittedVar[0]])
+				} else if len(splittedVar) == 2 && splittedVar[0] == "path" {
+					path[i] = fmt.Sprint(r.pathVariables[splittedVar[1]])
+				} else if len(splittedVar) == 2 && splittedVar[0] == "user" {
+					switch splittedVar[1] {
+					case "id":
+						path[i] = r.user.ID
+					case "name":
+						path[i] = r.user.Name
+					case "email":
+						path[i] = r.user.Email
+					default:
+						path[i] = "<nil>"
+					}
+				} else {
+					path[i] = "<nil>"
+				}
 			}
 		}
 
 		//Get requested item
 		target := api.ObjectRef(path)
-		item, err := get(target)
+		item, err := get(target, r.user)
 		if err == nil {
 			withContent[w.Name] = item
 		} else {
@@ -118,7 +138,7 @@ func (r RuleCheck) RetrieveWith(a Allow, get RetrievalFunc) map[string]interface
 	return withContent
 }
 
-func (r RuleCheck) CheckPath(user api.User, isWrite bool, get RetrievalFunc) (bool, error) {
+func (r RuleCheck) CheckPath(isWrite bool, get RetrievalFunc) (bool, error) {
 
 	a := r.rule.Read
 	if isWrite {
@@ -129,14 +149,14 @@ func (r RuleCheck) CheckPath(user api.User, isWrite bool, get RetrievalFunc) (bo
 
 	variables := map[string]interface{}{
 		"path": r.pathVariables,
-		"user": user,
+		"user": r.user,
 		"with": withContent,
 	}
 
 	return checkCondition(a.IfPath, variables)
 }
 
-func (r RuleCheck) CheckContent(user api.User, isWrite bool, content api.Document, newContent api.Document, get RetrievalFunc) (bool, error) {
+func (r RuleCheck) PrepareCheckContent(isWrite bool, get RetrievalFunc) RuleCheckForContent {
 
 	a := r.rule.Read
 	if isWrite {
@@ -145,12 +165,29 @@ func (r RuleCheck) CheckContent(user api.User, isWrite bool, content api.Documen
 
 	withContent := r.RetrieveWith(a, get)
 
+	return RuleCheckForContent{
+		IfContent:     a.IfContent,
+		User:          r.user,
+		PathVariables: r.pathVariables,
+		WithContent:   withContent,
+	}
+}
+
+type RuleCheckForContent struct {
+	IfContent     string
+	User          api.User
+	PathVariables map[string]interface{}
+	WithContent   map[string]interface{}
+}
+
+func (r RuleCheckForContent) Check(content api.Document, newContent api.Document) (bool, error) {
+
 	variables := map[string]interface{}{
-		"path":       r.pathVariables,
-		"user":       user,
+		"path":       r.PathVariables,
+		"user":       r.User,
 		"content":    content,
 		"newContent": newContent,
-		"with":       withContent,
+		"with":       r.WithContent,
 	}
 	if len(content.ID) == 0 {
 		variables["content"] = nil
@@ -159,5 +196,5 @@ func (r RuleCheck) CheckContent(user api.User, isWrite bool, content api.Documen
 		variables["newContent"] = nil
 	}
 
-	return checkCondition(a.IfContent, variables)
+	return checkCondition(r.IfContent, variables)
 }
